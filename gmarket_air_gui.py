@@ -10,6 +10,15 @@ import os
 import datetime
 import sys
 
+# 런처(exe)로 실행 시 scraper_core 경로 확보
+_here = os.path.dirname(os.path.abspath(__file__)) if "__file__" in dir() else ""
+if getattr(sys, "frozen", False):
+    _exe_dir = os.path.dirname(sys.executable)
+    if _exe_dir not in sys.path:
+        sys.path.insert(0, _exe_dir)
+elif _here and _here not in sys.path:
+    sys.path.insert(0, _here)
+
 # scraper_core가 같은 폴더에 있어야 함
 try:
     from scraper_core import (
