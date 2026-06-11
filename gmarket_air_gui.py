@@ -9,53 +9,6 @@ import threading
 import os
 import datetime
 import sys
-import shutil
-import urllib.request
-import ctypes
-
-# ─────────────────────────────────────────────
-#  자동 업데이트 (GitHub)
-# ─────────────────────────────────────────────
-CURRENT_VERSION = "1.1"
-GITHUB_USER     = "rlawlsah22"
-GITHUB_REPO     = "gmarket-air-tool"
-RAW_BASE        = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
-UPDATE_FILES    = ["gmarket_air_gui.py", "scraper_core.py"]
-
-def check_and_update():
-    try:
-        url = f"{RAW_BASE}/version.txt"
-        with urllib.request.urlopen(url, timeout=5) as r:
-            latest = r.read().decode().strip()
-
-        if latest <= CURRENT_VERSION:
-            return
-
-        # 현재 exe/py 위치
-        if getattr(sys, "frozen", False):
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-
-        for fname in UPDATE_FILES:
-            file_url = f"{RAW_BASE}/{fname}"
-            dst = os.path.join(base_dir, fname)
-            with urllib.request.urlopen(file_url, timeout=10) as r:
-                with open(dst, "wb") as f:
-                    f.write(r.read())
-
-        ctypes.windll.user32.MessageBoxW(
-            0,
-            f"새 버전({latest})으로 업데이트되었습니다.\n프로그램을 닫고 다시 실행해주세요.",
-            "업데이트 완료",
-            0x40
-        )
-        sys.exit()
-
-    except Exception:
-        pass
-
-check_and_update()
 
 # scraper_core가 같은 폴더에 있어야 함
 try:
