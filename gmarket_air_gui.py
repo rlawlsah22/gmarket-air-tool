@@ -193,7 +193,7 @@ class GmarketAirApp(tk.Tk):
 
         # 추가 귀국일 검색 (동남아 새벽도착 대응)
         self.extra_return_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(row2, text="+1일도 함께 검색 (귀국 현지출발이 하루 빠른 새벽도착편 비교용)",
+        tk.Checkbutton(row2, text="-1일도 함께 검색 (귀국 현지출발이 하루 빠른 새벽도착편 비교용)",
                        variable=self.extra_return_var, bg=C_PANEL, font=FONT_SMALL,
                        activebackground=C_PANEL, command=self._update_return_hint
                        ).grid(row=1, column=0, columnspan=9, sticky="w", padx=14, pady=(2,0))
@@ -204,7 +204,7 @@ class GmarketAirApp(tk.Tk):
         self._return_hint.grid(row=2, column=0, columnspan=9, sticky="w", padx=16, pady=(0,2))
 
         # 안내문
-        tk.Label(row2, text="(귀국일은 현지 출발일 기준. 같은 한국일정도 새벽도착편은 현지출발이 하루 빨라 +1일 체크 권장. 날짜형식: 2026-07-10)",
+        tk.Label(row2, text="(귀국일은 현지 출발일 기준. 같은 한국일정도 새벽도착편은 현지출발이 하루 빨라 -1일 체크 권장. 날짜형식: 2026-07-10)",
                  bg=C_PANEL, fg="#999999", font=("맑은 고딕", 8)
                  ).grid(row=3, column=0, columnspan=9, sticky="w", padx=16, pady=(0,4))
 
@@ -522,7 +522,7 @@ class GmarketAirApp(tk.Tk):
             off = int(self.return_offset_var.get()) - 1  # 출발일 포함 총 일수 → 오프셋
             d1 = df + _dt.timedelta(days=off)
             if self.extra_return_var.get():
-                d2 = df + _dt.timedelta(days=off + 1)
+                d2 = df + _dt.timedelta(days=off - 1)
                 txt = f"  → {df.strftime('%m/%d')} 출발 시 귀국 현지출발일: {d1.strftime('%m/%d')}, {d2.strftime('%m/%d')} 둘 다 검색"
             else:
                 txt = f"  → {df.strftime('%m/%d')} 출발 시 귀국 현지출발일: {d1.strftime('%m/%d')} 검색"
@@ -780,7 +780,7 @@ class GmarketAirApp(tk.Tk):
         # 귀국 오프셋 = 출발 +N일 (사용자 직접 입력)
         base_offset = p["return_offset"]
         # 추가 귀국일 검색 시 [기본, 기본+1] 둘 다 검색
-        offsets = [base_offset, base_offset + 1] if extra_return else [base_offset]
+        offsets = [base_offset, base_offset - 1] if extra_return else [base_offset]
 
         # 출발일 리스트 생성
         date_list = []
