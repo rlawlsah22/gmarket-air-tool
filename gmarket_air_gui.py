@@ -230,7 +230,7 @@ class GmarketAirApp(tk.Tk):
         self._expand_frame.grid(row=1, column=0, sticky="ew", padx=16, pady=(0,8))
 
         # 헤더
-        for ci, hdr in enumerate(["순위", "귀국일수(일)", "도착 ~(상한)", "귀국출발 (이후~이전)", "도착 시간대(상한 비울 때)", ""]):
+        for ci, hdr in enumerate(["순위", "여행 일수(일)", "도착 ~(상한)", "귀국출발 (이후~이전)", "도착 시간대(상한 비울 때)", ""]):
             tk.Label(self._expand_frame, text=hdr, bg=C_PANEL, font=FONT_SUB,
                      fg=C_ACCENT).grid(row=0, column=ci, padx=8, pady=(4,2), sticky="w")
 
