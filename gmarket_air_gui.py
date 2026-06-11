@@ -775,7 +775,7 @@ class GmarketAirApp(tk.Tk):
 
         from datetime import timedelta
         from scraper_core import (init_driver, build_url, fetch_flights,
-                                  select_best, parse_price, calc_per_person, in_band)
+                                  select_best, parse_price, calc_per_person, in_band, parse_hour)
 
         # 귀국 오프셋 = 출발 +N일 (사용자 직접 입력)
         base_offset = p["return_offset"]
@@ -851,6 +851,9 @@ class GmarketAirApp(tk.Tk):
                                         dep_date.strftime("%Y%m%d"),
                                         arr_try.strftime("%Y%m%d"))
                         flights = fetch_flights(driver, url, self._log_msg)
+                        # -1일 오프셋 검색 시 rArr가 10:30 이전인 편만 유효 (익일 한국 도착 확인)
+                        if off < base_offset and flights:
+                            flights = [f for f in flights if parse_hour(f.get("rArr", "")) * 60 + (int(f.get("rArr", "0:0").split(":")[1]) if ":" in f.get("rArr", "") else 0) <= 630]
                         cand = select_best(flights, config) if flights else None
                         if cand:
                             cand_total = parse_price(cand.get("cardPrice", "0"))
