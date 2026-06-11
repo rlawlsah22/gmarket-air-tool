@@ -96,6 +96,15 @@ cards.forEach(card => {
     const rDep = timeEls[2] ? timeEls[2].innerText.trim() : '';
     const rArr = timeEls[3] ? timeEls[3].innerText.trim() : '';
 
+    // 오는편 비행시간 파싱 (예: "05시간 25분" → 분으로 변환)
+    const summaryEls = card.querySelectorAll('.box__summary-info .text__time');
+    let rDuration = 0;
+    if (summaryEls.length >= 2) {
+        const txt = summaryEls[1].innerText.trim();
+        const hm = txt.match(/(\\d+)시간\\s*(\\d*)분?/);
+        if (hm) rDuration = parseInt(hm[1]) * 60 + (hm[2] ? parseInt(hm[2]) : 0);
+    }
+
     // 오는편 날짜 파싱 (link의 key 파라미터에서 추출)
     let rDepDate = '';
     const link = card.querySelector('a.link__seller-select');
@@ -104,7 +113,7 @@ cards.forEach(card => {
         if (key) {
             const parts = key[1].split('-');
             if (parts.length >= 2) {
-                const d = parts[1].substring(0, 8); // 예: 20260705
+                const d = parts[1].substring(0, 8);
                 rDepDate = d.substring(0,4) + '-' + d.substring(4,6) + '-' + d.substring(6,8);
             }
         }
@@ -116,7 +125,7 @@ cards.forEach(card => {
     const cardPrice = cardPriceEl ? cardPriceEl.innerText.trim() : '';
 
     if (airline && dep && arr) {
-        results.push({airline, dep, arr, rDep, rArr, rDepDate, cardPrice});
+        results.push({airline, dep, arr, rDep, rArr, rDepDate, rDuration, cardPrice});
     }
 });
 return results;

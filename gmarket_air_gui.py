@@ -851,18 +851,18 @@ class GmarketAirApp(tk.Tk):
                                         dep_date.strftime("%Y%m%d"),
                                         arr_try.strftime("%Y%m%d"))
                         flights = fetch_flights(driver, url, self._log_msg)
-                        # -1일 오프셋 검색 시 오는편 출발일이 arr_try이고 한국 도착이 10:30 이전인 편만 유효
+                        # -1일 오프셋 검색 시 익일 도착편만 유효
+                        # 출발시간(분) + 비행시간(분) > 1440이면 익일 도착
                         if off < base_offset and flights:
-                            arr_try_str = arr_try.strftime("%Y-%m-%d")
-                            def _rArr_min(f):
-                                t = f.get("rArr", "")
-                                if ":" not in t:
-                                    return 9999
-                                h, m = t.split(":")
-                                return int(h) * 60 + int(m)
-                            flights = [f for f in flights
-                                       if f.get("rDepDate", "") == arr_try_str
-                                       and _rArr_min(f) <= 630]
+                            def _is_next_day(f):
+                                rDep_t = f.get("rDep", "")
+                                dur = f.get("rDuration", 0)
+                                if not rDep_t or not dur:
+                                    return False
+                                h, m = rDep_t.split(":") if ":" in rDep_t else (0, 0)
+                                dep_min = int(h) * 60 + int(m)
+                                return dep_min + dur > 1440
+                            flights = [f for f in flights if _is_next_day(f)]
                         cand = select_best(flights, config) if flights else None
                         if cand:
                             cand_total = parse_price(cand.get("cardPrice", "0"))
