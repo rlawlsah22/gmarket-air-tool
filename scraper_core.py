@@ -520,8 +520,6 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
     time.sleep(1)
     try:
         flights = driver.execute_script(JS_PARSE)
-        if log_fn and flights:
-            log_fn(f"  ℹ 항공편 {len(flights)}개 파싱됨")
         return flights or []
     except Exception as e:
         if log_fn:
