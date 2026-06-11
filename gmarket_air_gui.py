@@ -30,7 +30,7 @@ except ImportError:
     SCRAPER_OK = False
     AIRPORTS = {
         "국내": {"인천":"ICN","부산":"PUS","김포":"GMP","청주":"CJJ","대구":"TAE"},
-        "일본": {"삿포로":"CTS","도쿄":"TYO","오사카":"OSA","후쿠오카":"FUK","오키나와":"OKA"},
+        "일본": {"삿포로":"CTS","도쿄(나리타)":"NRT","도쿄(하네다)":"HND","오사카":"OSA","후쿠오카":"FUK","오키나와":"OKA"},
     }
     LCC_ALL = FSC_ALL = LCC_TIER1 = LCC_TIER2 = FOREIGN_ALL = []
 
