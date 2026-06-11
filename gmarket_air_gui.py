@@ -851,9 +851,18 @@ class GmarketAirApp(tk.Tk):
                                         dep_date.strftime("%Y%m%d"),
                                         arr_try.strftime("%Y%m%d"))
                         flights = fetch_flights(driver, url, self._log_msg)
-                        # -1일 오프셋 검색 시 rArr가 10:30 이전인 편만 유효 (익일 한국 도착 확인)
+                        # -1일 오프셋 검색 시 오는편 출발일이 arr_try이고 한국 도착이 10:30 이전인 편만 유효
                         if off < base_offset and flights:
-                            flights = [f for f in flights if parse_hour(f.get("rArr", "")) * 60 + (int(f.get("rArr", "0:0").split(":")[1]) if ":" in f.get("rArr", "") else 0) <= 630]
+                            arr_try_str = arr_try.strftime("%Y-%m-%d")
+                            def _rArr_min(f):
+                                t = f.get("rArr", "")
+                                if ":" not in t:
+                                    return 9999
+                                h, m = t.split(":")
+                                return int(h) * 60 + int(m)
+                            flights = [f for f in flights
+                                       if f.get("rDepDate", "") == arr_try_str
+                                       and _rArr_min(f) <= 630]
                         cand = select_best(flights, config) if flights else None
                         if cand:
                             cand_total = parse_price(cand.get("cardPrice", "0"))
@@ -862,6 +871,9 @@ class GmarketAirApp(tk.Tk):
                                 best_total = cand_total
                                 best_arr_date = arr_try
                     arr_date = best_arr_date
+                    # -1일 오프셋 선택 시 한국 도착일은 +1일 (현지 출발 익일 도착)
+                    if best_arr_date < dep_date + timedelta(days=base_offset):
+                        arr_date = best_arr_date + timedelta(days=1)
 
                 if best:
                     actual_price = best.get("cardPrice", "")

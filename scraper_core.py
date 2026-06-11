@@ -96,13 +96,27 @@ cards.forEach(card => {
     const rDep = timeEls[2] ? timeEls[2].innerText.trim() : '';
     const rArr = timeEls[3] ? timeEls[3].innerText.trim() : '';
 
+    // 오는편 날짜 파싱 (link의 key 파라미터에서 추출)
+    let rDepDate = '';
+    const link = card.querySelector('a.link__seller-select');
+    if (link) {
+        const key = link.href.match(/key=([^&]+)/);
+        if (key) {
+            const parts = key[1].split('-');
+            if (parts.length >= 2) {
+                const d = parts[1].substring(0, 8); // 예: 20260705
+                rDepDate = d.substring(0,4) + '-' + d.substring(4,6) + '-' + d.substring(6,8);
+            }
+        }
+    }
+
     // 카드 상단 표시가 (fallback용)
     const cardPriceEl = card.querySelector('.box__discount-cost .text__price') ||
                         card.querySelector('.box__seller-cost .text__price');
     const cardPrice = cardPriceEl ? cardPriceEl.innerText.trim() : '';
 
     if (airline && dep && arr) {
-        results.push({airline, dep, arr, rDep, rArr, cardPrice});
+        results.push({airline, dep, arr, rDep, rArr, rDepDate, cardPrice});
     }
 });
 return results;
