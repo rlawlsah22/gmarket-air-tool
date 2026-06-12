@@ -561,20 +561,22 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
         except Exception as e:
             log_fn(f"  🔍 [필터클릭후오류] {e}")
 
-    # 스크롤 다운으로 추가 항공편 로드
+    # 스크롤 다운으로 추가 항공편 로드 (모든 카드 로드될 때까지)
     last_count = 0
     for _ in range(10):
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(1.5)
+        time.sleep(2)
         count = driver.execute_script(
             "return document.querySelectorAll('.box__item-card').length"
         )
+        if log_fn:
+            log_fn(f"  🔍 [스크롤] 카드수={count}")
         if count == last_count:
             break
         last_count = count
 
     driver.execute_script("window.scrollTo(0, 0);")
-    time.sleep(1)
+    time.sleep(2)
     try:
         flights = driver.execute_script(JS_PARSE)
 
