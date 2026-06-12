@@ -564,6 +564,15 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
     try:
         flights = driver.execute_script(JS_PARSE)
 
+        # ── 디버그: 파싱된 항공사 목록 출력 ──
+        if log_fn and flights:
+            airline_names = list({f.get("airline","") for f in flights})
+            fsc = [f for f in flights if f.get("airline") in ["대한항공","아시아나항공"]]
+            log_fn(f"  🔍 [항공사목록] {airline_names}")
+            log_fn(f"  🔍 [FSC카드수] {len(fsc)}개")
+            for f in fsc:
+                log_fn(f"  🔍 [FSC] {f.get('airline')} dep={f.get('dep')} arr={f.get('arr')} rDep={f.get('rDep')} rArr={f.get('rArr')} cardPrice={f.get('cardPrice')}")
+
         return flights or []
     except Exception as e:
         if log_fn:
