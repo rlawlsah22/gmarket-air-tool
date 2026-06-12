@@ -530,19 +530,28 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
             log_fn(f"  🔍 [필터상태오류] {e}")
 
     click_filters(driver, specific_airlines=specific_airlines)
-    time.sleep(3)
 
-    # 필터 클릭 후 카드 재로드 대기
+    # 필터 클릭 후 카드가 사라졌다가 다시 로드될 때까지 대기
     try:
-        WebDriverWait(driver, 10).until(
+        # 카드가 일단 사라지길 기다림 (필터 적용 중)
+        time.sleep(1)
+        WebDriverWait(driver, 5).until_not(
             EC.presence_of_element_located((By.CSS_SELECTOR, ".box__item-card"))
         )
-        WebDriverWait(driver, 10).until(
+    except Exception:
+        pass  # 안 사라져도 계속 진행
+
+    try:
+        # 카드가 다시 나타날 때까지 대기
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, ".box__item-card"))
+        )
+        WebDriverWait(driver, 15).until(
             lambda d: d.execute_script(
                 "return document.querySelectorAll('.box__item-card .text__time').length > 0"
             )
         )
-        time.sleep(2)
+        time.sleep(3)
     except Exception:
         pass
 
