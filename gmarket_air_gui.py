@@ -135,7 +135,7 @@ def roundup_label(widget, text, bg, font=FONT_BODY, fg="#333333"):
 class GmarketAirApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("G마켓 항공료 자동 추출기  |  투어로 2팀  [테스트용]")
+        self.title("G마켓 항공료 자동 추출기  |  투어로 2팀")
         self.geometry("1180x820")
         self.resizable(True, True)
         self.configure(bg=C_BG)
@@ -149,7 +149,7 @@ class GmarketAirApp(tk.Tk):
         banner = tk.Frame(self, bg=C_ACCENT, height=54)
         banner.pack(fill="x")
         banner.pack_propagate(False)
-        tk.Label(banner, text="✈  G마켓 항공료 자동 추출기  [테스트용]",
+        tk.Label(banner, text="✈  G마켓 항공료 자동 추출기",
                  bg=C_ACCENT, fg="white", font=FONT_TITLE).pack(side="left", padx=18, pady=10)
         tk.Label(banner, text="투어로 2팀",
                  bg=C_ACCENT, fg="#BDD7EE", font=FONT_SMALL).pack(side="right", padx=18)
