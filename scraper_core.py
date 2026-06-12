@@ -532,6 +532,20 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
     click_filters(driver, specific_airlines=specific_airlines)
     time.sleep(3)
 
+    # 필터 클릭 후 카드 재로드 대기
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, ".box__item-card"))
+        )
+        WebDriverWait(driver, 10).until(
+            lambda d: d.execute_script(
+                "return document.querySelectorAll('.box__item-card .text__time').length > 0"
+            )
+        )
+        time.sleep(2)
+    except Exception:
+        pass
+
     # ── 디버그: 필터 클릭 후 상태 확인 ──
     if log_fn:
         try:
