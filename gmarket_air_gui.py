@@ -9,15 +9,53 @@ import threading
 import os
 import datetime
 import sys
+import shutil
+import urllib.request
+import ctypes
 
-# 런처(exe)로 실행 시 scraper_core 경로 확보
-_here = os.path.dirname(os.path.abspath(__file__)) if "__file__" in dir() else ""
-if getattr(sys, "frozen", False):
-    _exe_dir = os.path.dirname(sys.executable)
-    if _exe_dir not in sys.path:
-        sys.path.insert(0, _exe_dir)
-elif _here and _here not in sys.path:
-    sys.path.insert(0, _here)
+# ─────────────────────────────────────────────
+#  자동 업데이트 (GitHub)
+# ─────────────────────────────────────────────
+CURRENT_VERSION = "1.0"
+GITHUB_USER     = "rlawlsah22"
+GITHUB_REPO     = "gmarket-air-tool"
+RAW_BASE        = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
+UPDATE_FILES    = ["gmarket_air_gui.py", "scraper_core.py"]
+
+def check_and_update():
+    try:
+        url = f"{RAW_BASE}/version.txt"
+        with urllib.request.urlopen(url, timeout=5) as r:
+            latest = r.read().decode().strip()
+
+        if latest <= CURRENT_VERSION:
+            return
+
+        # 현재 exe/py 위치
+        if getattr(sys, "frozen", False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+
+        for fname in UPDATE_FILES:
+            file_url = f"{RAW_BASE}/{fname}"
+            dst = os.path.join(base_dir, fname)
+            with urllib.request.urlopen(file_url, timeout=10) as r:
+                with open(dst, "wb") as f:
+                    f.write(r.read())
+
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            f"새 버전({latest})으로 업데이트되었습니다.\n프로그램을 닫고 다시 실행해주세요.",
+            "업데이트 완료",
+            0x40
+        )
+        sys.exit()
+
+    except Exception:
+        pass
+
+check_and_update()
 
 # scraper_core가 같은 폴더에 있어야 함
 try:
@@ -30,7 +68,7 @@ except ImportError:
     SCRAPER_OK = False
     AIRPORTS = {
         "국내": {"인천":"ICN","부산":"PUS","김포":"GMP","청주":"CJJ","대구":"TAE"},
-        "일본": {"삿포로":"CTS","도쿄(나리타)":"NRT","도쿄(하네다)":"HND","오사카":"OSA","후쿠오카":"FUK","오키나와":"OKA"},
+        "일본": {"삿포로":"CTS","도쿄":"TYO","오사카":"OSA","후쿠오카":"FUK","오키나와":"OKA"},
     }
     LCC_ALL = FSC_ALL = LCC_TIER1 = LCC_TIER2 = FOREIGN_ALL = []
 
@@ -74,6 +112,7 @@ SPECIFIC_AIRLINES = [
     "대한항공", "아시아나항공", "에어프레미아", "진에어", "제주항공",
     "티웨이항공", "이스타항공", "에어부산", "에어서울", "에어로케이",
     "파라타항공", "타이항공", "필리핀항공", "베트남항공",
+    "중국국제항공", "중국남방항공", "중국동방항공", "산동항공",
 ]
 
 
@@ -96,7 +135,7 @@ def roundup_label(widget, text, bg, font=FONT_BODY, fg="#333333"):
 class GmarketAirApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("G마켓 항공료 자동 추출기  |  투어로 2팀")
+        self.title("G마켓 항공료 자동 추출기  |  투어로 2팀  [테스트용]")
         self.geometry("1180x820")
         self.resizable(True, True)
         self.configure(bg=C_BG)
@@ -110,7 +149,7 @@ class GmarketAirApp(tk.Tk):
         banner = tk.Frame(self, bg=C_ACCENT, height=54)
         banner.pack(fill="x")
         banner.pack_propagate(False)
-        tk.Label(banner, text="✈  G마켓 항공료 자동 추출기",
+        tk.Label(banner, text="✈  G마켓 항공료 자동 추출기  [테스트용]",
                  bg=C_ACCENT, fg="white", font=FONT_TITLE).pack(side="left", padx=18, pady=10)
         tk.Label(banner, text="투어로 2팀",
                  bg=C_ACCENT, fg="#BDD7EE", font=FONT_SMALL).pack(side="right", padx=18)
@@ -193,7 +232,7 @@ class GmarketAirApp(tk.Tk):
 
         # 추가 귀국일 검색 (동남아 새벽도착 대응)
         self.extra_return_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(row2, text="-1일도 함께 검색 (귀국 현지출발이 하루 빠른 새벽도착편 비교용)",
+        tk.Checkbutton(row2, text="+1일도 함께 검색 (귀국 현지출발이 하루 빠른 새벽도착편 비교용)",
                        variable=self.extra_return_var, bg=C_PANEL, font=FONT_SMALL,
                        activebackground=C_PANEL, command=self._update_return_hint
                        ).grid(row=1, column=0, columnspan=9, sticky="w", padx=14, pady=(2,0))
@@ -204,7 +243,7 @@ class GmarketAirApp(tk.Tk):
         self._return_hint.grid(row=2, column=0, columnspan=9, sticky="w", padx=16, pady=(0,2))
 
         # 안내문
-        tk.Label(row2, text="(귀국일은 현지 출발일 기준. 같은 한국일정도 새벽도착편은 현지출발이 하루 빨라 -1일 체크 권장. 날짜형식: 2026-07-10)",
+        tk.Label(row2, text="(귀국일은 현지 출발일 기준. 같은 한국일정도 새벽도착편은 현지출발이 하루 빨라 +1일 체크 권장. 날짜형식: 2026-07-10)",
                  bg=C_PANEL, fg="#999999", font=("맑은 고딕", 8)
                  ).grid(row=3, column=0, columnspan=9, sticky="w", padx=16, pady=(0,4))
 
@@ -230,7 +269,7 @@ class GmarketAirApp(tk.Tk):
         self._expand_frame.grid(row=1, column=0, sticky="ew", padx=16, pady=(0,8))
 
         # 헤더
-        for ci, hdr in enumerate(["순위", "여행 일수(일)", "도착 ~(상한)", "귀국출발 (이후~이전)", "도착 시간대(상한 비울 때)", ""]):
+        for ci, hdr in enumerate(["순위", "귀국일수(일)", "도착 ~(상한)", "귀국출발 (이후~이전)", "도착 시간대(상한 비울 때)", ""]):
             tk.Label(self._expand_frame, text=hdr, bg=C_PANEL, font=FONT_SUB,
                      fg=C_ACCENT).grid(row=0, column=ci, padx=8, pady=(4,2), sticky="w")
 
@@ -522,7 +561,7 @@ class GmarketAirApp(tk.Tk):
             off = int(self.return_offset_var.get()) - 1  # 출발일 포함 총 일수 → 오프셋
             d1 = df + _dt.timedelta(days=off)
             if self.extra_return_var.get():
-                d2 = df + _dt.timedelta(days=off - 1)
+                d2 = df + _dt.timedelta(days=off + 1)
                 txt = f"  → {df.strftime('%m/%d')} 출발 시 귀국 현지출발일: {d1.strftime('%m/%d')}, {d2.strftime('%m/%d')} 둘 다 검색"
             else:
                 txt = f"  → {df.strftime('%m/%d')} 출발 시 귀국 현지출발일: {d1.strftime('%m/%d')} 검색"
@@ -775,12 +814,14 @@ class GmarketAirApp(tk.Tk):
 
         from datetime import timedelta
         from scraper_core import (init_driver, build_url, fetch_flights,
-                                  select_best, parse_price, calc_per_person, in_band, parse_hour)
+                                  select_best, parse_price, calc_per_person, in_band,
+                                  reset_debug)
+        reset_debug()
 
         # 귀국 오프셋 = 출발 +N일 (사용자 직접 입력)
         base_offset = p["return_offset"]
         # 추가 귀국일 검색 시 [기본, 기본+1] 둘 다 검색
-        offsets = [base_offset, base_offset - 1] if extra_return else [base_offset]
+        offsets = [base_offset, base_offset + 1] if extra_return else [base_offset]
 
         # 출발일 리스트 생성
         date_list = []
@@ -851,25 +892,6 @@ class GmarketAirApp(tk.Tk):
                                         dep_date.strftime("%Y%m%d"),
                                         arr_try.strftime("%Y%m%d"))
                         flights = fetch_flights(driver, url, self._log_msg)
-                        # 모든 검색에서 한국 도착일이 base_offset 날짜와 같은 편만 유효
-                        base_arr_str = (dep_date + timedelta(days=base_offset)).strftime("%Y-%m-%d")
-                        if flights:
-                            def _to_min(t):
-                                if not t or ":" not in t:
-                                    return -1
-                                h, m = t.split(":")
-                                return int(h) * 60 + int(m)
-
-                            if off == base_offset:
-                                # base 검색: rArr >= rDep인 편만 유효 (당일 도착)
-                                flights = [f for f in flights
-                                           if not f.get("rDep") or not f.get("rArr")
-                                           or _to_min(f["rArr"]) >= _to_min(f["rDep"])]
-                            else:
-                                # -1일 검색: rArr < rDep인 편만 유효 (익일 새벽 도착)
-                                flights = [f for f in flights
-                                           if f.get("rDep") and f.get("rArr")
-                                           and _to_min(f["rArr"]) < _to_min(f["rDep"])]
                         cand = select_best(flights, config) if flights else None
                         if cand:
                             cand_total = parse_price(cand.get("cardPrice", "0"))
@@ -878,9 +900,6 @@ class GmarketAirApp(tk.Tk):
                                 best_total = cand_total
                                 best_arr_date = arr_try
                     arr_date = best_arr_date
-                    # -1일 오프셋 선택 시 한국 도착일은 +1일 (현지 출발 익일 도착)
-                    if best_arr_date < dep_date + timedelta(days=base_offset):
-                        arr_date = best_arr_date + timedelta(days=1)
 
                 if best:
                     actual_price = best.get("cardPrice", "")

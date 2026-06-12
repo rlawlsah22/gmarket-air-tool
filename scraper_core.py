@@ -67,7 +67,7 @@ LCC_ALL   = LCC_TIER1 + LCC_TIER2 + LCC_OTHER
 FSC_ALL   = ["아시아나항공", "대한항공"]
 FOREIGN_ALL = [
     "JAL", "ANA", "피치항공", "제트스타재팬", "스프링재팬",
-    "중국국제항공", "중국남방항공", "중국동방항공", "샤먼항공", "하이난항공",
+    "중국국제항공", "중국남방항공", "중국동방항공", "산동항공", "샤먼항공", "하이난항공",
     "베트남항공", "비엣젯항공", "뱀부항공",
     "타이항공", "타이에어아시아", "방콕에어웨이즈",
     "에어아시아", "세부퍼시픽", "필리핀항공",
@@ -240,6 +240,10 @@ AIRLINE_CODE_MAP = {
     "타이항공":   "TG",
     "필리핀항공":  "PR",
     "베트남항공":  "VN",
+    "중국국제항공": "CA",
+    "중국남방항공": "CZ",
+    "중국동방항공": "MU",
+    "산동항공":    "SC",
 }
 
 def click_filters(driver, specific_airlines=None):
@@ -529,8 +533,8 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
     # 필터 클릭 후 카드가 사라졌다가 다시 로드될 때까지 대기
     try:
         # 카드가 일단 사라지길 기다림 (필터 적용 중)
-        time.sleep(1)
-        WebDriverWait(driver, 5).until_not(
+        time.sleep(2)
+        WebDriverWait(driver, 8).until_not(
             EC.presence_of_element_located((By.CSS_SELECTOR, ".box__item-card"))
         )
     except Exception:
@@ -538,15 +542,15 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
 
     try:
         # 카드가 다시 나타날 때까지 대기
-        WebDriverWait(driver, 15).until(
+        WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, ".box__item-card"))
         )
-        WebDriverWait(driver, 15).until(
+        WebDriverWait(driver, 20).until(
             lambda d: d.execute_script(
                 "return document.querySelectorAll('.box__item-card .text__time').length > 0"
             )
         )
-        time.sleep(3)
+        time.sleep(4)
     except Exception:
         pass
 
