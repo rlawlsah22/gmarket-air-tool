@@ -131,6 +131,56 @@ cards.forEach((card, idx) => {
 return results;
 """
 
+# ─────────────────────────────────────────────
+#  디버그: 카드 구조 진단용 JS
+# ─────────────────────────────────────────────
+JS_DEBUG_CARD = """
+const cards = document.querySelectorAll('.box__item-card');
+if (!cards.length) return JSON.stringify({error: '카드 없음', url: location.href});
+
+const c = cards[0];
+
+// .text__price 셀렉터 후보들 전부 시도
+const selectors = [
+    '.box__discount-cost .text__price',
+    '.box__seller-cost .text__price',
+    '.text__price',
+    '.box__cost .text__price',
+    '.box__total-cost .text__price',
+    '[class*="price"]',
+    '[class*="cost"]',
+];
+const selectorResults = {};
+selectors.forEach(sel => {
+    try {
+        const el = c.querySelector(sel);
+        selectorResults[sel] = el ? el.innerText.trim() : null;
+    } catch(e) {
+        selectorResults[sel] = 'ERROR: ' + e.message;
+    }
+});
+
+// 카드 내 class에 price/cost 포함된 요소 전부 수집
+const allPriceLike = [...c.querySelectorAll('*')]
+    .filter(el => (el.className||'').toString().match(/price|cost/i) && el.children.length === 0)
+    .slice(0, 10)
+    .map(el => ({class: el.className, text: el.innerText.trim()}));
+
+// 시간 요소
+const times = [...c.querySelectorAll('.text__time')].map(e => e.innerText.trim()).slice(0,6);
+
+// 항공사
+const airline = c.querySelector('.text__airline')?.innerText.trim();
+
+return JSON.stringify({
+    카드수: cards.length,
+    항공사: airline,
+    시간들: times,
+    셀렉터결과: selectorResults,
+    가격유사요소: allPriceLike,
+}, null, 2);
+"""
+
 
 # ─────────────────────────────────────────────
 #  드라이버 초기화
@@ -175,7 +225,6 @@ def build_url(origin: str, dest: str, dep_date: str, arr_date: str, adults: int 
 # ─────────────────────────────────────────────
 #  필터 클릭
 # ─────────────────────────────────────────────
-# G마켓 항공사 필터 data-code 매핑
 AIRLINE_CODE_MAP = {
     "대한항공":   "KE",
     "아시아나항공": "OZ",
@@ -194,7 +243,6 @@ AIRLINE_CODE_MAP = {
 }
 
 def click_filters(driver, specific_airlines=None):
-    # 직항/무료수하물 필터
     for code in ["opr", "bag"]:
         try:
             btn = driver.find_element(By.CSS_SELECTOR, f"button[data-code='{code}']")
@@ -204,29 +252,20 @@ def click_filters(driver, specific_airlines=None):
         except Exception:
             pass
 
-    # 항공사 필터 (특정 항공사 지정 모드일 때만)
     if specific_airlines:
         try:
-            # 전체 체크박스 해제
-            all_chk = driver.find_element(
-                By.CSS_SELECTOR, "input#check_airline_0"
-            )
-            # 항공사 필터 위치로 스크롤
+            all_chk = driver.find_element(By.CSS_SELECTOR, "input#check_airline_0")
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", all_chk)
             time.sleep(1)
             if all_chk.is_selected():
                 driver.execute_script("arguments[0].click();", all_chk)
                 time.sleep(1)
-
-            # 원하는 항공사 data-code로 체크
             for airline_name in specific_airlines:
                 code = AIRLINE_CODE_MAP.get(airline_name)
                 if not code:
                     continue
                 try:
-                    chk = driver.find_element(
-                        By.CSS_SELECTOR, f"input[data-code='{code}']"
-                    )
+                    chk = driver.find_element(By.CSS_SELECTOR, f"input[data-code='{code}']")
                     if not chk.is_selected():
                         driver.execute_script("arguments[0].click();", chk)
                         time.sleep(0.7)
@@ -246,13 +285,6 @@ def parse_hour(t: str) -> int:
 
 
 def in_band(t: str, band) -> bool:
-    """
-    band 형태:
-      - str: '오전' 등 슬롯명
-      - list[str]: 슬롯명 리스트
-      - dict {type:'range', from:분, to:분}: 직접입력 범위
-      - dict {type:'slots', slots:[...]}: 체크박스 슬롯 리스트
-    """
     if isinstance(band, dict):
         if band["type"] == "range":
             h = parse_hour(t)
@@ -278,7 +310,6 @@ def parse_price(s: str) -> int:
 
 
 def calc_per_person(total4: int) -> int:
-    """4인 총액 → 1인 현금 최종금액 (÷4 → 만원 단위 올림 → +40,000원)"""
     import math
     per = total4 / 4
     rounded = math.ceil(per / 10000) * 10000
@@ -312,7 +343,6 @@ sellerItems.forEach(item => {
     }
 });
 
-// fallback: 모든결제수단
 if (!price) {
     sellerItems.forEach(item => {
         const nameEl = item.querySelector('.text__seller-info');
@@ -334,10 +364,8 @@ return {price, sellerName};
 
 
 def fetch_seller_price(driver, airline, dep, arr, card_price, log_fn=None) -> tuple:
-    """항공편 정보로 카드 찾아 '모든 결제수단' URL 추출 → 새 탭 열어서 파싱"""
     main_window = driver.current_window_handle
     try:
-        # 항공편 일치 카드의 '모든 결제수단' 링크 URL 추출 (link.pathname+search)
         seller_url = driver.execute_script("""
             const tgtAirline = arguments[0];
             const tgtDep = arguments[1];
@@ -381,7 +409,6 @@ def fetch_seller_price(driver, airline, dep, arr, card_price, log_fn=None) -> tu
             WebDriverWait(driver, 12).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, ".box__payment-item .text__seller-info"))
             )
-            # 판매사 목록이 완전히 로드될 때까지 대기 (가격이 채워질 때까지)
             WebDriverWait(driver, 12).until(
                 lambda d: d.execute_script(
                     "return document.querySelectorAll('.box__payment-item .box__discount-cost .text__price').length > 0"
@@ -415,14 +442,6 @@ def fetch_seller_price(driver, airline, dep, arr, card_price, log_fn=None) -> tu
 
 
 def select_best(flights: list, config: dict) -> Optional[dict]:
-    """
-    config 키:
-      airline_mode: "LCC우선_FSC대체" | "LCC만" | "FSC만" | "특정항공사"
-      specific_airlines: list[str]  (airline_mode=="특정항공사" 일 때)
-      dep_band: str  출발 시간대
-      arr_band: str  도착 시간대 (귀국편)
-      ret_dep_band: str  귀국 출발 시간대
-    """
     mode = config.get("airline_mode", "LCC우선_FSC대체")
     dep_band     = config.get("dep_band",     "전체")
     arr_band     = config.get("arr_band",     "전체")
@@ -443,54 +462,46 @@ def select_best(flights: list, config: dict) -> Optional[dict]:
         candidates = [f for f in pool if time_ok(f)]
         if not candidates:
             return None
-        # cardPrice로 임시 정렬 (실제 판매사 가격은 이후 fetch_seller_price로 획득)
         return min(candidates, key=lambda f: parse_price(f.get("cardPrice", f.get("price", "0"))))
 
     if mode == "외항사만":
         return best_from([f for f in flights if f["airline"] in FOREIGN_ALL])
-
     if mode == "특정항공사":
         specific = config.get("specific_airlines", [])
-        pool = [f for f in flights if f["airline"] in specific]
-        return best_from(pool)
-
+        return best_from([f for f in flights if f["airline"] in specific])
     if mode == "LCC만":
         return best_from([f for f in flights if f["airline"] in LCC_ALL])
-
     if mode == "FSC만":
         return best_from([f for f in flights if f["airline"] in FSC_ALL])
-
     if mode == "LCC우선_FSC대체":
-        # LCC Tier1 우선
         result = best_from([f for f in flights if f["airline"] in LCC_TIER1])
         if result:
             return result
-        # LCC Tier2 (제주항공, 에어부산)
         result = best_from([f for f in flights if f["airline"] in LCC_TIER2])
         if result:
             return result
-        # 기타 LCC
         result = best_from([f for f in flights if f["airline"] in LCC_OTHER])
         if result:
             return result
-        # FSC fallback
-        result = best_from([f for f in flights if f["airline"] in FSC_ALL])
-        return result
-
+        return best_from([f for f in flights if f["airline"] in FSC_ALL])
     return None
 
 
 # ─────────────────────────────────────────────
 #  페이지 로드 및 파싱
 # ─────────────────────────────────────────────
+
+# 디버그 로그: 첫 번째 검색에서만 카드 구조 상세 출력
+_debug_done = False
+
 def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list:
+    global _debug_done
+
     driver.get(url)
     try:
-        # 카드 존재 확인
         WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, ".box__item-card"))
         )
-        # 가격까지 완전히 로드될 때까지 대기
         WebDriverWait(driver, 20).until(
             lambda d: d.execute_script(
                 "return document.querySelectorAll('.box__item-card .text__time').length > 0"
@@ -500,9 +511,23 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
         if log_fn:
             log_fn("  ⚠ 결과 로드 실패 (항공편 없을 수 있음)")
         return []
+
     time.sleep(3)
     click_filters(driver, specific_airlines=specific_airlines)
     time.sleep(3)
+
+    # ── 디버그: 첫 번째 검색에서만 카드 구조 진단 ──
+    if not _debug_done and log_fn:
+        try:
+            debug_result = driver.execute_script(JS_DEBUG_CARD)
+            log_fn("  🔍 [카드 구조 진단 시작]")
+            for line in debug_result.split("\n"):
+                if line.strip():
+                    log_fn(f"      {line}")
+            log_fn("  🔍 [카드 구조 진단 끝]")
+        except Exception as e:
+            log_fn(f"  🔍 [진단 오류] {e}")
+        _debug_done = True
 
     # 스크롤 다운으로 추가 항공편 로드
     last_count = 0
@@ -520,11 +545,26 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
     time.sleep(1)
     try:
         flights = driver.execute_script(JS_PARSE)
+
+        # ── 디버그: 파싱된 항공편 cardPrice 상태 샘플 출력 ──
+        if log_fn and flights:
+            samples = [
+                f"{f.get('airline','')} cardPrice={repr(f.get('cardPrice',''))}"
+                for f in flights[:5]
+            ]
+            log_fn(f"  🔍 [파싱샘플] {' | '.join(samples)}")
+
         return flights or []
     except Exception as e:
         if log_fn:
             log_fn(f"  ⚠ JS 파싱 오류: {e}")
         return []
+
+
+def reset_debug():
+    """새 검색 시작 시 디버그 플래그 초기화"""
+    global _debug_done
+    _debug_done = False
 
 
 # ─────────────────────────────────────────────
@@ -537,6 +577,7 @@ def collect_monthly(origin: str, dest: str, year: int, month: int,
     import calendar
     _, last_day = calendar.monthrange(year, month)
     rows = []
+    reset_debug()
     driver = init_driver(show=show_browser)
 
     try:
@@ -618,7 +659,6 @@ def save_excel(rows: list, origin: str, dest: str,
     ws.title = f"{origin}_{dest}_{year}{month:02d}"
     ws.row_dimensions[1].height = 22
 
-    # 헤더
     for col, (h, w) in enumerate(zip(HEADERS, COL_WIDTHS), 1):
         cell = ws.cell(row=1, column=col, value=h)
         cell.fill   = FILL_HEADER
@@ -627,15 +667,13 @@ def save_excel(rows: list, origin: str, dest: str,
         cell.border = BORDER
         ws.column_dimensions[get_column_letter(col)].width = w
 
-    # 데이터
     for r, row in enumerate(rows, 2):
         ws.row_dimensions[r].height = 18
         if row["found"]:
             airline = row["airline"]
             seller  = row.get("seller", "")
-            # ⚠ 비지정 판매사면 주황색
             if "⚠" in seller:
-                fill = PatternFill("solid", fgColor="FCE4D6")  # 분홍/주황
+                fill = PatternFill("solid", fgColor="FCE4D6")
             elif airline in LCC_TIER1:
                 fill = FILL_LCC
             elif airline in LCC_TIER2 or airline in FSC_ALL:
@@ -661,11 +699,9 @@ def save_excel(rows: list, origin: str, dest: str,
             cell.alignment = CENTER
             cell.border    = BORDER
 
-        # H, I 열 숫자 포맷
         if row["found"]:
             ws.cell(row=r, column=8).number_format = '#,##0'
             ws.cell(row=r, column=9).number_format = '#,##0'
 
-    # 틀 고정
     ws.freeze_panes = "A2"
     wb.save(out_path)
