@@ -87,7 +87,7 @@ JS_PARSE = """
 const TARGET_SELLERS = ['롯데관광', '롯데제이티비', '여행이지'];
 const results = [];
 const cards = document.querySelectorAll('.box__item-card');
-cards.forEach(card => {
+cards.forEach((card, idx) => {
     const airlineEls = card.querySelectorAll('.text__airline');
     const airline = airlineEls.length > 0 ? airlineEls[0].innerText.trim() : '';
     const timeEls = card.querySelectorAll('.box__time-info .text__time');
@@ -96,7 +96,7 @@ cards.forEach(card => {
     const rDep = timeEls[2] ? timeEls[2].innerText.trim() : '';
     const rArr = timeEls[3] ? timeEls[3].innerText.trim() : '';
 
-    // 오는편 비행시간 파싱 (예: "05시간 25분" → 분으로 변환)
+    // 오는편 비행시간 파싱
     const summaryEls = card.querySelectorAll('.box__summary-info .text__time');
     let rDuration = 0;
     if (summaryEls.length >= 2) {
@@ -119,13 +119,37 @@ cards.forEach(card => {
         }
     }
 
-    // 카드 상단 표시가 (fallback용)
+    // 숨겨진 상세여정에서 오는편 도착 날짜 파싱
+    let rArrDate = '';
+    const detailId = card.querySelector('[aria-control]');
+    if (detailId) {
+        const detailEl = document.getElementById(detailId.getAttribute('aria-control'));
+        if (detailEl) {
+            const lineTitles = detailEl.querySelectorAll('.box__line-title');
+            const lineInners = detailEl.querySelectorAll('.box__line-inner');
+            // 오는편은 두 번째 섹션
+            if (lineInners.length >= 2) {
+                const dateEls = lineInners[1].querySelectorAll('.text__date');
+                if (dateEls.length >= 2) {
+                    // 두 번째 text__date가 도착 날짜 (예: "08.06(목)")
+                    const raw = dateEls[1].innerText.trim();
+                    const m = raw.match(/(\\d{2})\\.(\\d{2})/);
+                    if (m) {
+                        const year = new Date().getFullYear();
+                        rArrDate = year + '-' + m[1] + '-' + m[2];
+                    }
+                }
+            }
+        }
+    }
+
+    // 카드 상단 표시가
     const cardPriceEl = card.querySelector('.box__discount-cost .text__price') ||
                         card.querySelector('.box__seller-cost .text__price');
     const cardPrice = cardPriceEl ? cardPriceEl.innerText.trim() : '';
 
     if (airline && dep && arr) {
-        results.push({airline, dep, arr, rDep, rArr, rDepDate, rDuration, cardPrice});
+        results.push({airline, dep, arr, rDep, rArr, rDepDate, rArrDate, rDuration, cardPrice});
     }
 });
 return results;
