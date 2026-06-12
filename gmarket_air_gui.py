@@ -851,11 +851,14 @@ class GmarketAirApp(tk.Tk):
                                         dep_date.strftime("%Y%m%d"),
                                         arr_try.strftime("%Y%m%d"))
                         flights = fetch_flights(driver, url, self._log_msg)
-                        # -1일 오프셋 검색 시 한국 도착일이 base_offset 날짜와 같은 편만 유효
-                        if off < base_offset and flights:
-                            base_arr_str = (dep_date + timedelta(days=base_offset)).strftime("%Y-%m-%d")
-                            flights = [f for f in flights
-                                       if f.get("rArrDate", "") == base_arr_str]
+                        # 모든 검색에서 한국 도착일이 base_offset 날짜와 같은 편만 유효
+                        base_arr_str = (dep_date + timedelta(days=base_offset)).strftime("%Y-%m-%d")
+                        if flights:
+                            filtered = [f for f in flights if f.get("rArrDate", "") == base_arr_str]
+                            # rArrDate 파싱 실패한 경우 fallback (빈 값이면 그냥 통과)
+                            if not filtered:
+                                filtered = [f for f in flights if not f.get("rArrDate", "")]
+                            flights = filtered
                         cand = select_best(flights, config) if flights else None
                         if cand:
                             cand_total = parse_price(cand.get("cardPrice", "0"))
