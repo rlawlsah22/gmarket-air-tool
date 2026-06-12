@@ -513,21 +513,39 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
         return []
 
     time.sleep(3)
+
+    # ── 디버그: 필터 클릭 전 상태 확인 ──
+    if log_fn:
+        try:
+            fs = driver.execute_script("""
+                const r = {};
+                ['opr','bag'].forEach(c => {
+                    const b = document.querySelector(`button[data-code='${c}']`);
+                    r[c] = b ? b.getAttribute('aria-selected') : '버튼없음';
+                });
+                return r;
+            """)
+            log_fn(f"  🔍 [필터클릭전] opr(직항)={fs.get('opr')} / bag(무료수하물)={fs.get('bag')}")
+        except Exception as e:
+            log_fn(f"  🔍 [필터상태오류] {e}")
+
     click_filters(driver, specific_airlines=specific_airlines)
     time.sleep(3)
 
-    # ── 디버그: 첫 번째 검색에서만 카드 구조 진단 ──
-    if not _debug_done and log_fn:
+    # ── 디버그: 필터 클릭 후 상태 확인 ──
+    if log_fn:
         try:
-            debug_result = driver.execute_script(JS_DEBUG_CARD)
-            log_fn("  🔍 [카드 구조 진단 시작]")
-            for line in debug_result.split("\n"):
-                if line.strip():
-                    log_fn(f"      {line}")
-            log_fn("  🔍 [카드 구조 진단 끝]")
+            fs = driver.execute_script("""
+                const r = {};
+                ['opr','bag'].forEach(c => {
+                    const b = document.querySelector(`button[data-code='${c}']`);
+                    r[c] = b ? b.getAttribute('aria-selected') : '버튼없음';
+                });
+                return r;
+            """)
+            log_fn(f"  🔍 [필터클릭후] opr(직항)={fs.get('opr')} / bag(무료수하물)={fs.get('bag')}")
         except Exception as e:
-            log_fn(f"  🔍 [진단 오류] {e}")
-        _debug_done = True
+            log_fn(f"  🔍 [필터클릭후오류] {e}")
 
     # 스크롤 다운으로 추가 항공편 로드
     last_count = 0
@@ -545,14 +563,6 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
     time.sleep(1)
     try:
         flights = driver.execute_script(JS_PARSE)
-
-        # ── 디버그: 파싱된 항공편 cardPrice 상태 샘플 출력 ──
-        if log_fn and flights:
-            samples = [
-                f"{f.get('airline','')} cardPrice={repr(f.get('cardPrice',''))}"
-                for f in flights[:5]
-            ]
-            log_fn(f"  🔍 [파싱샘플] {' | '.join(samples)}")
 
         return flights or []
     except Exception as e:
