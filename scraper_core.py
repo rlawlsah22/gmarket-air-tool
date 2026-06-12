@@ -119,37 +119,13 @@ cards.forEach((card, idx) => {
         }
     }
 
-    // 숨겨진 상세여정에서 오는편 도착 날짜 파싱
-    let rArrDate = '';
-    const detailId = card.querySelector('[aria-control]');
-    if (detailId) {
-        const detailEl = document.getElementById(detailId.getAttribute('aria-control'));
-        if (detailEl) {
-            const lineTitles = detailEl.querySelectorAll('.box__line-title');
-            const lineInners = detailEl.querySelectorAll('.box__line-inner');
-            // 오는편은 두 번째 섹션
-            if (lineInners.length >= 2) {
-                const dateEls = lineInners[1].querySelectorAll('.text__date');
-                if (dateEls.length >= 2) {
-                    // 두 번째 text__date가 도착 날짜 (예: "08.06(목)")
-                    const raw = dateEls[1].innerText.trim();
-                    const m = raw.match(/(\\d{2})\\.(\\d{2})/);
-                    if (m) {
-                        const year = new Date().getFullYear();
-                        rArrDate = year + '-' + m[1] + '-' + m[2];
-                    }
-                }
-            }
-        }
-    }
-
     // 카드 상단 표시가
     const cardPriceEl = card.querySelector('.box__discount-cost .text__price') ||
                         card.querySelector('.box__seller-cost .text__price');
     const cardPrice = cardPriceEl ? cardPriceEl.innerText.trim() : '';
 
     if (airline && dep && arr) {
-        results.push({airline, dep, arr, rDep, rArr, rDepDate, rArrDate, rDuration, cardPrice});
+        results.push({airline, dep, arr, rDep, rArr, rDepDate, rDuration, cardPrice});
     }
 });
 return results;

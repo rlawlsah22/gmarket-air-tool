@@ -854,7 +854,22 @@ class GmarketAirApp(tk.Tk):
                         # 모든 검색에서 한국 도착일이 base_offset 날짜와 같은 편만 유효
                         base_arr_str = (dep_date + timedelta(days=base_offset)).strftime("%Y-%m-%d")
                         if flights:
-                            flights = [f for f in flights if f.get("rArrDate", "") == base_arr_str]
+                            def _to_min(t):
+                                if not t or ":" not in t:
+                                    return -1
+                                h, m = t.split(":")
+                                return int(h) * 60 + int(m)
+
+                            if off == base_offset:
+                                # base 검색: rArr >= rDep인 편만 유효 (당일 도착)
+                                flights = [f for f in flights
+                                           if not f.get("rDep") or not f.get("rArr")
+                                           or _to_min(f["rArr"]) >= _to_min(f["rDep"])]
+                            else:
+                                # -1일 검색: rArr < rDep인 편만 유효 (익일 새벽 도착)
+                                flights = [f for f in flights
+                                           if f.get("rDep") and f.get("rArr")
+                                           and _to_min(f["rArr"]) < _to_min(f["rDep"])]
                         cand = select_best(flights, config) if flights else None
                         if cand:
                             cand_total = parse_price(cand.get("cardPrice", "0"))
