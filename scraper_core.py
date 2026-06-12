@@ -243,6 +243,16 @@ AIRLINE_CODE_MAP = {
 }
 
 def click_filters(driver, specific_airlines=None):
+    # 직항 체크박스 클릭 (check_flight_01)
+    try:
+        chk = driver.find_element(By.CSS_SELECTOR, "input#check_flight_01")
+        if not chk.is_selected():
+            driver.execute_script("arguments[0].click();", chk)
+            time.sleep(1.5)
+    except Exception:
+        pass
+
+    # opr=공동운항제외, bag=무료수하물
     for code in ["opr", "bag"]:
         try:
             btn = driver.find_element(By.CSS_SELECTOR, f"button[data-code='{code}']")
@@ -514,21 +524,6 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
 
     time.sleep(3)
 
-    # ── 디버그: 필터 클릭 전 상태 확인 ──
-    if log_fn:
-        try:
-            fs = driver.execute_script("""
-                const r = {};
-                ['opr','bag'].forEach(c => {
-                    const b = document.querySelector(`button[data-code='${c}']`);
-                    r[c] = b ? b.getAttribute('aria-selected') : '버튼없음';
-                });
-                return r;
-            """)
-            log_fn(f"  🔍 [필터클릭전] opr(직항)={fs.get('opr')} / bag(무료수하물)={fs.get('bag')}")
-        except Exception as e:
-            log_fn(f"  🔍 [필터상태오류] {e}")
-
     click_filters(driver, specific_airlines=specific_airlines)
 
     # 필터 클릭 후 카드가 사라졌다가 다시 로드될 때까지 대기
@@ -555,20 +550,7 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
     except Exception:
         pass
 
-    # ── 디버그: 필터 클릭 후 상태 확인 ──
-    if log_fn:
-        try:
-            fs = driver.execute_script("""
-                const r = {};
-                ['opr','bag'].forEach(c => {
-                    const b = document.querySelector(`button[data-code='${c}']`);
-                    r[c] = b ? b.getAttribute('aria-selected') : '버튼없음';
-                });
-                return r;
-            """)
-            log_fn(f"  🔍 [필터클릭후] opr(직항)={fs.get('opr')} / bag(무료수하물)={fs.get('bag')}")
-        except Exception as e:
-            log_fn(f"  🔍 [필터클릭후오류] {e}")
+
 
     # 스크롤 다운으로 추가 항공편 로드 (모든 카드 로드될 때까지)
     last_count = 0
@@ -578,8 +560,6 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
         count = driver.execute_script(
             "return document.querySelectorAll('.box__item-card').length"
         )
-        if log_fn:
-            log_fn(f"  🔍 [스크롤] 카드수={count}")
         if count == last_count:
             break
         last_count = count
@@ -588,15 +568,6 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
     time.sleep(2)
     try:
         flights = driver.execute_script(JS_PARSE)
-
-        # ── 디버그: 파싱된 항공사 목록 출력 ──
-        if log_fn and flights:
-            airline_names = list({f.get("airline","") for f in flights})
-            fsc = [f for f in flights if f.get("airline") in ["대한항공","아시아나항공"]]
-            log_fn(f"  🔍 [항공사목록] {airline_names}")
-            log_fn(f"  🔍 [FSC카드수] {len(fsc)}개")
-            for f in fsc:
-                log_fn(f"  🔍 [FSC] {f.get('airline')} dep={f.get('dep')} arr={f.get('arr')} rDep={f.get('rDep')} rArr={f.get('rArr')} cardPrice={f.get('cardPrice')}")
 
         return flights or []
     except Exception as e:
