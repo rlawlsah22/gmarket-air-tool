@@ -867,7 +867,9 @@ class GmarketAirApp(tk.Tk):
                         url = build_url(origin, dest,
                                         dep_date.strftime("%Y%m%d"),
                                         arr_date_try.strftime("%Y%m%d"))
-                        flights = fetch_flights(driver, url, self._log_msg)
+                        flights = fetch_flights(driver, url, self._log_msg,
+                                                   airline_mode=config.get("airline_mode"),
+                                                   specific_airlines=config.get("specific_airlines") if config.get("airline_mode") == "특정항공사" else None)
                         if not flights:
                             continue
                         trial_config = dict(config)
@@ -891,7 +893,9 @@ class GmarketAirApp(tk.Tk):
                         url = build_url(origin, dest,
                                         dep_date.strftime("%Y%m%d"),
                                         arr_try.strftime("%Y%m%d"))
-                        flights = fetch_flights(driver, url, self._log_msg)
+                        flights = fetch_flights(driver, url, self._log_msg,
+                                                   airline_mode=config.get("airline_mode"),
+                                                   specific_airlines=config.get("specific_airlines") if config.get("airline_mode") == "특정항공사" else None)
                         cand = select_best(flights, config) if flights else None
                         if cand:
                             cand_total = parse_price(cand.get("cardPrice", "0"))
