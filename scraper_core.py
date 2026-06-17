@@ -246,7 +246,7 @@ AIRLINE_CODE_MAP = {
     "산동항공":    "SC",
 }
 
-def click_filters(driver, specific_airlines=None):
+def click_filters(driver, specific_airlines=None, airline_mode=None):
     # 직항 체크박스 클릭 (check_flight_01)
     try:
         chk = driver.find_element(By.CSS_SELECTOR, "input#check_flight_01")
@@ -266,11 +266,32 @@ def click_filters(driver, specific_airlines=None):
         except Exception:
             pass
 
+    # airline_mode에 따라 체크할 항공사 자동 결정
+    if not specific_airlines and airline_mode:
+        if airline_mode == "FSC만":
+            specific_airlines = FSC_ALL
+        elif airline_mode == "LCC만":
+            specific_airlines = LCC_ALL
+        elif airline_mode == "LCC우선_FSC대체":
+            specific_airlines = LCC_ALL + FSC_ALL
+        elif airline_mode == "외항사만":
+            specific_airlines = FOREIGN_ALL
+
     if specific_airlines:
         try:
             all_chk = driver.find_element(By.CSS_SELECTOR, "input#check_airline_0")
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", all_chk)
             time.sleep(1)
+            # 항공사 더보기 클릭 (숨겨진 항공사 펼치기)
+            try:
+                more_btns = driver.find_elements(By.CSS_SELECTOR, ".btn__more-view")
+                for btn in more_btns:
+                    if btn.is_displayed():
+                        driver.execute_script("arguments[0].click();", btn)
+                        time.sleep(0.5)
+            except Exception:
+                pass
+
             if all_chk.is_selected():
                 driver.execute_script("arguments[0].click();", all_chk)
                 time.sleep(1)
