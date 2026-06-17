@@ -508,7 +508,7 @@ def select_best(flights: list, config: dict) -> Optional[dict]:
 # 디버그 로그: 첫 번째 검색에서만 카드 구조 상세 출력
 _debug_done = False
 
-def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list:
+def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None, airline_mode=None) -> list:
     global _debug_done
 
     driver.get(url)
@@ -528,7 +528,7 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
 
     time.sleep(3)
 
-    click_filters(driver, specific_airlines=specific_airlines)
+    click_filters(driver, specific_airlines=specific_airlines, airline_mode=airline_mode)
 
     # 필터 클릭 후 카드가 사라졌다가 다시 로드될 때까지 대기
     try:
