@@ -246,7 +246,7 @@ AIRLINE_CODE_MAP = {
     "산동항공":    "SC",
 }
 
-def click_filters(driver, specific_airlines=None, airline_mode=None):
+def click_filters(driver, specific_airlines=None):
     # 직항 체크박스 클릭 (check_flight_01)
     try:
         chk = driver.find_element(By.CSS_SELECTOR, "input#check_flight_01")
@@ -266,32 +266,11 @@ def click_filters(driver, specific_airlines=None, airline_mode=None):
         except Exception:
             pass
 
-    # airline_mode에 따라 체크할 항공사 자동 결정
-    if not specific_airlines and airline_mode:
-        if airline_mode == "FSC만":
-            specific_airlines = FSC_ALL
-        elif airline_mode == "LCC만":
-            specific_airlines = LCC_ALL
-        elif airline_mode == "LCC우선_FSC대체":
-            specific_airlines = LCC_ALL + FSC_ALL
-        elif airline_mode == "외항사만":
-            specific_airlines = FOREIGN_ALL
-
     if specific_airlines:
         try:
             all_chk = driver.find_element(By.CSS_SELECTOR, "input#check_airline_0")
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", all_chk)
             time.sleep(1)
-            # 항공사 더보기 클릭 (숨겨진 항공사 펼치기)
-            try:
-                more_btns = driver.find_elements(By.CSS_SELECTOR, ".btn__more-view")
-                for btn in more_btns:
-                    if btn.is_displayed():
-                        driver.execute_script("arguments[0].click();", btn)
-                        time.sleep(0.5)
-            except Exception:
-                pass
-
             if all_chk.is_selected():
                 driver.execute_script("arguments[0].click();", all_chk)
                 time.sleep(1)
@@ -529,7 +508,7 @@ def select_best(flights: list, config: dict) -> Optional[dict]:
 # 디버그 로그: 첫 번째 검색에서만 카드 구조 상세 출력
 _debug_done = False
 
-def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None, airline_mode=None) -> list:
+def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list:
     global _debug_done
 
     driver.get(url)
@@ -549,7 +528,7 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None, airline
 
     time.sleep(3)
 
-    click_filters(driver, specific_airlines=specific_airlines, airline_mode=airline_mode)
+    click_filters(driver, specific_airlines=specific_airlines)
 
     # 필터 클릭 후 카드가 사라졌다가 다시 로드될 때까지 대기
     try:
@@ -687,9 +666,9 @@ THIN = Side(style="thin", color="CCCCCC")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 CENTER = Alignment(horizontal="center", vertical="center")
 
-HEADERS = ["출발일", "귀국편출발일", "귀국일", "항공사", "출발시간", "도착시간",
+HEADERS = ["출발일", "귀국일", "항공사", "출발시간", "도착시간",
            "귀국출발", "귀국도착", "4인총금액(카드할인가)", "1인금액", "비고"]
-COL_WIDTHS = [13, 13, 13, 12, 10, 10, 10, 10, 22, 18, 16]
+COL_WIDTHS = [13, 13, 12, 10, 10, 10, 10, 22, 18, 16]
 
 
 def save_excel(rows: list, origin: str, dest: str,
@@ -720,37 +699,15 @@ def save_excel(rows: list, origin: str, dest: str,
                 fill = FILL_TIER2
             else:
                 fill = FILL_LCC
-            # 귀국편출발일: rDep이 rArr보다 크면(자정넘어) arr_date 전날, 아니면 arr_date
-            rdep = row.get("rDep", "")
-            rarr = row.get("rArr", "")
-            try:
-                import datetime as _dt
-                arr_d = _dt.datetime.strptime(row["arr_date"], "%Y-%m-%d").date()
-                if rdep and rarr:
-                    rdep_min = int(rdep.split(":")[0]) * 60 + int(rdep.split(":")[1])
-                    rarr_min = int(rarr.split(":")[0]) * 60 + int(rarr.split(":")[1])
-                    # rDep > rArr 이면 자정넘어 도착 → 귀국편출발일 = arr_date
-                    # rDep < rArr 이면 당일도착 → 귀국편출발일 = arr_date
-                    # rDep이 00:xx이고 rArr이 07:xx → arr_date가 한국도착일이므로 현지출발은 arr_date
-                    # 단, rArr < rDep이면 익일도착 → 현지출발은 arr_date 전날
-                    if rarr_min < rdep_min:
-                        rdep_date = (arr_d - _dt.timedelta(days=1)).strftime("%Y-%m-%d")
-                    else:
-                        rdep_date = row["arr_date"]
-                else:
-                    rdep_date = row["arr_date"]
-            except Exception:
-                rdep_date = row["arr_date"]
-
             values = [
-                row["dep_date"], rdep_date, row["arr_date"], airline,
+                row["dep_date"], row["arr_date"], airline,
                 row["dep"], row["arr"], row["rDep"], row["rArr"],
                 row["total4"], row["per1"], row["seller"],
             ]
             font = FONT_NORMAL
         else:
             fill = FILL_NONE
-            values = [row["dep_date"], "", row["arr_date"],
+            values = [row["dep_date"], row["arr_date"],
                       "X", "", "", "", "", "", "", ""]
             font = FONT_NONE
 
@@ -762,8 +719,8 @@ def save_excel(rows: list, origin: str, dest: str,
             cell.border    = BORDER
 
         if row["found"]:
+            ws.cell(row=r, column=8).number_format = '#,##0'
             ws.cell(row=r, column=9).number_format = '#,##0'
-            ws.cell(row=r, column=10).number_format = '#,##0'
 
     ws.freeze_panes = "A2"
     wb.save(out_path)
