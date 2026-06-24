@@ -724,3 +724,86 @@ def save_excel(rows: list, origin: str, dest: str,
 
     ws.freeze_panes = "A2"
     wb.save(out_path)
+
+
+# ─────────────────────────────────────────────
+#  세트별 엑셀 저장 (검색 조건 세트 모드)
+# ─────────────────────────────────────────────
+def _safe_sheet_name(name: str) -> str:
+    """엑셀 시트명 제약 처리: 31자 제한, 금지문자 제거"""
+    for ch in ['\\', '/', '?', '*', '[', ']', ':']:
+        name = name.replace(ch, '_')
+    return name[:31] if len(name) > 31 else name
+
+
+def save_excel_multi(rows_by_set: list, origin: str, dest: str, out_path: str):
+    """
+    rows_by_set: [{"label": "세트1_3일_LCC만", "rows": [...]}, ...]
+    세트별로 시트를 분리해서 같은 엑셀 파일에 저장
+    """
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    used_names = set()
+    for entry in rows_by_set:
+        label = entry["label"]
+        rows  = entry["rows"]
+
+        sheet_name = _safe_sheet_name(label)
+        base_name = sheet_name
+        suffix = 1
+        while sheet_name in used_names:
+            suffix += 1
+            sheet_name = _safe_sheet_name(f"{base_name}_{suffix}")
+        used_names.add(sheet_name)
+
+        ws = wb.create_sheet(title=sheet_name)
+        ws.row_dimensions[1].height = 22
+
+        for col, (h, w) in enumerate(zip(HEADERS, COL_WIDTHS), 1):
+            cell = ws.cell(row=1, column=col, value=h)
+            cell.fill      = FILL_HEADER
+            cell.font      = FONT_HEADER
+            cell.alignment = CENTER
+            cell.border    = BORDER
+            ws.column_dimensions[get_column_letter(col)].width = w
+
+        for r, row in enumerate(rows, 2):
+            ws.row_dimensions[r].height = 18
+            if row["found"]:
+                airline = row["airline"]
+                seller  = row.get("seller", "")
+                if "⚠" in seller:
+                    fill = PatternFill("solid", fgColor="FCE4D6")
+                elif airline in LCC_TIER1:
+                    fill = FILL_LCC
+                elif airline in LCC_TIER2 or airline in FSC_ALL:
+                    fill = FILL_TIER2
+                else:
+                    fill = FILL_LCC
+                values = [
+                    row["dep_date"], row["arr_date"], airline,
+                    row["dep"], row["arr"], row["rDep"], row["rArr"],
+                    row["total4"], row["per1"], row["seller"],
+                ]
+                font = FONT_NORMAL
+            else:
+                fill = FILL_NONE
+                values = [row["dep_date"], row["arr_date"],
+                          "X", "", "", "", "", "", "", ""]
+                font = FONT_NONE
+
+            for col, val in enumerate(values, 1):
+                cell = ws.cell(row=r, column=col, value=val)
+                cell.fill      = fill
+                cell.font      = font
+                cell.alignment = CENTER
+                cell.border    = BORDER
+
+            if row["found"]:
+                ws.cell(row=r, column=8).number_format = '#,##0'
+                ws.cell(row=r, column=9).number_format = '#,##0'
+
+        ws.freeze_panes = "A2"
+
+    wb.save(out_path)

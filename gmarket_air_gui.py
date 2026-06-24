@@ -55,13 +55,13 @@ def check_and_update():
     except Exception:
         pass
 
-check_and_update()
+# check_and_update()  # 테스트 빌드: GitHub 자동 업데이트로 파일이 덮어써지는 것을 막기 위해 주석 처리함
 
 # scraper_core가 같은 폴더에 있어야 함
 try:
     from scraper_core import (
         AIRPORTS, AIRPORT_CODES, LCC_ALL, FSC_ALL, LCC_TIER1, LCC_TIER2,
-        FOREIGN_ALL, collect_monthly, save_excel
+        FOREIGN_ALL, collect_monthly, save_excel, save_excel_multi
     )
     SCRAPER_OK = True
 except ImportError:
@@ -90,6 +90,8 @@ C_LOG_FG   = "#CDD6F4"
 C_LOG_OK   = "#A6E3A1"
 C_LOG_ERR  = "#F38BA8"
 C_LOG_INFO = "#89B4FA"
+C_FSC_BG   = "#EBF3FB"
+C_LCC_BG   = "#EDFBEE"
 
 FONT_TITLE  = ("맑은 고딕", 15, "bold")
 FONT_SUB    = ("맑은 고딕", 10, "bold")
@@ -130,13 +132,469 @@ def roundup_label(widget, text, bg, font=FONT_BODY, fg="#333333"):
 
 
 # ─────────────────────────────────────────────
+#  검색 조건 블록 (여행일수 + 항공사모드 + 시간대 + 대체조건)
+#  단일 모드/세트 모드 양쪽에서 재사용
+# ─────────────────────────────────────────────
+class ConditionBlock:
+    """
+    하나의 검색 조건 세트를 표현하는 위젯.
+    - 여행 일수 + (+1일 검색)
+    - 항공사 모드 + 특정항공사 선택
+    - 시간대 조건 (4칸)
+    - 대체 조건 자동 확장 (선택)
+
+    parent: 부모 tk 프레임
+    bg: 배경색
+    show_set_header: True면 "세트 N" 헤더 + 삭제버튼 표시 (세트 모드용)
+    set_index: 세트 번호 (헤더 표시용)
+    on_delete: 삭제 버튼 콜백 (세트 모드용)
+    """
+
+    def __init__(self, parent, bg=None, show_set_header=False,
+                 set_index=1, on_delete=None, default_nights="3",
+                 default_mode=None):
+        self.bg = bg if bg else C_PANEL
+        self.frame = tk_module = None  # placeholder, set below
+
+        import tkinter as tk
+        from tkinter import ttk
+        self._tk = tk
+        self._ttk = ttk
+
+        self.outer = tk.Frame(parent, bg=self.bg,
+                              highlightbackground=C_BORDER, highlightthickness=1)
+        self.outer.pack(fill="x", padx=16, pady=8)
+
+        pad = {"padx": 12, "pady": 4}
+        row_idx = 0
+
+        # ── 세트 헤더 (세트 모드일 때만) ──
+        if show_set_header:
+            hdr = tk.Frame(self.outer, bg=self.bg)
+            hdr.grid(row=row_idx, column=0, columnspan=8, sticky="ew", padx=18, pady=(14, 4))
+            badge = tk.Label(hdr, text=str(set_index), bg=C_PANEL, fg=C_ACCENT,
+                             font=FONT_SUB, width=2,
+                             highlightbackground=C_BORDER, highlightthickness=1)
+            badge.pack(side="left", padx=(0, 6))
+            tk.Label(hdr, text=f"세트 {set_index}", bg=self.bg, fg=C_ACCENT,
+                     font=FONT_SUB).pack(side="left")
+            if on_delete:
+                tk.Button(hdr, text="✕ 세트 삭제", command=on_delete,
+                          bg="#FFEEEE", fg=C_WARN, font=FONT_SMALL,
+                          relief="flat", cursor="hand2", padx=6).pack(side="right")
+            row_idx += 1
+
+        # ── 여행 일수 + 항공사 모드 (한 줄) ──
+        top_row = tk.Frame(self.outer, bg=self.bg)
+        top_row.grid(row=row_idx, column=0, columnspan=8, sticky="w", padx=18, pady=(14, 8))
+        row_idx += 1
+
+        tk.Label(top_row, text="여행 일수", bg=self.bg, font=FONT_SUB).pack(side="left", pady=4)
+        self.return_offset_var = tk.StringVar(value=default_nights)
+        ttk.Spinbox(top_row, from_=1, to=20, textvariable=self.return_offset_var,
+                    width=4, font=FONT_BODY).pack(side="left", padx=(6, 4))
+        tk.Label(top_row, text="일", bg=self.bg, font=FONT_BODY).pack(side="left", padx=(0, 24))
+
+        tk.Label(top_row, text="항공사 모드", bg=self.bg, font=FONT_SUB).pack(side="left", pady=4)
+        self.airline_mode_var = tk.StringVar(value=default_mode or AIRLINE_MODES[0])
+        mode_cb = ttk.Combobox(top_row, textvariable=self.airline_mode_var,
+                               values=AIRLINE_MODES, state="readonly", width=30)
+        mode_cb.pack(side="left", padx=(6, 0), pady=4)
+        mode_cb.bind("<<ComboboxSelected>>", self._on_mode_change)
+
+        # ── 특정 항공사 선택 ──
+        self._specific_frame = tk.Frame(self.outer, bg=self.bg)
+        self._specific_frame.grid(row=row_idx, column=0, columnspan=8, sticky="w", padx=18, pady=6)
+        row_idx += 1
+        tk.Label(self._specific_frame, text="항공사 선택 (복수 가능):",
+                 bg=self.bg, font=FONT_SMALL).grid(row=0, column=0, columnspan=6, sticky="w", pady=(0, 2))
+        self._airline_vars = {}
+        PER_ROW = 6
+        for i, al in enumerate(SPECIFIC_AIRLINES):
+            v = tk.BooleanVar(value=False)
+            self._airline_vars[al] = v
+            cb = tk.Checkbutton(self._specific_frame, text=al, variable=v,
+                                bg=self.bg, font=FONT_SMALL, activebackground=self.bg,
+                                anchor="w", width=13)
+            cb.grid(row=1 + (i // PER_ROW), column=i % PER_ROW, sticky="w", padx=2, pady=1)
+        self._specific_frame.grid_remove()
+
+        # ── +1일도 함께 검색 ──
+        self.extra_return_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(self.outer, text="+1일도 함께 검색 (귀국 현지출발이 하루 빠른 새벽도착편 비교용)",
+                       variable=self.extra_return_var, bg=self.bg, font=FONT_SMALL,
+                       activebackground=self.bg, command=self._update_return_hint
+                       ).grid(row=row_idx, column=0, columnspan=8, sticky="w", padx=18, pady=(4, 0))
+        row_idx += 1
+
+        self._return_hint = tk.Label(self.outer, text="", bg=self.bg, fg=C_ACCENT2,
+                                     font=("맑은 고딕", 8))
+        self._return_hint.grid(row=row_idx, column=0, columnspan=8, sticky="w", padx=20, pady=(2, 8))
+        row_idx += 1
+
+        self.return_offset_var.trace_add("write", lambda *a: self._update_return_hint())
+        self._date_from_getter = lambda: None  # 외부에서 주입 (date_from 참조용)
+
+        # ── 구분선 ──
+        sep_line = tk.Frame(self.outer, bg=C_BORDER, height=1)
+        sep_line.grid(row=row_idx, column=0, columnspan=8, sticky="ew", padx=18, pady=(4, 0))
+        row_idx += 1
+
+        # ── 시간대 조건 ──
+        band_outer = tk.Frame(self.outer, bg=self.bg)
+        band_outer.grid(row=row_idx, column=0, columnspan=8, sticky="ew", padx=18, pady=(14, 8))
+        row_idx += 1
+
+        tk.Label(band_outer, text="시간대 조건", bg=self.bg, fg=C_ACCENT,
+                 font=FONT_SUB).pack(anchor="w", pady=(0, 8))
+
+        band_grid = tk.Frame(band_outer, bg=self.bg)
+        band_grid.pack(fill="x")
+        for _col in range(4):
+            band_grid.columnconfigure(_col, weight=1)
+
+        band_cols = [
+            ("가는편 출발", "dep_band"),
+            ("가는편 도착", "arr_band"),
+            ("오는편 출발", "ret_dep_band"),
+            ("오는편 도착", "ret_arr_band"),
+        ]
+        self._band_vars = {}
+        self._band_all_vars = {}
+        self._band_custom_from = {}
+        self._band_custom_to   = {}
+
+        for col, (lbl, key) in enumerate(band_cols):
+            tk.Label(band_grid, text=lbl, bg=self.bg, font=FONT_SMALL,
+                     anchor="center").grid(row=0, column=col, padx=10, pady=(2, 4), sticky="ew")
+
+        for col, (lbl, key) in enumerate(band_cols):
+            fd = tk.Frame(band_grid, bg=self.bg)
+            fd.grid(row=1, column=col, padx=10, pady=(0, 4), sticky="ew")
+            tk.Label(fd, text="직접입력:", bg=self.bg, fg="#555", font=("맑은 고딕", 8)).pack(side="left")
+            fv = tk.StringVar(value="")
+            tv = tk.StringVar(value="")
+            self._band_custom_from[key] = fv
+            self._band_custom_to[key]   = tv
+            tk.Entry(fd, textvariable=fv, width=5, font=("맑은 고딕", 8),
+                     relief="solid", bd=1, bg="#F8F9FB").pack(side="left", padx=(2, 0))
+            tk.Label(fd, text="~", bg=self.bg, font=("맑은 고딕", 8)).pack(side="left", padx=1)
+            tk.Entry(fd, textvariable=tv, width=5, font=("맑은 고딕", 8),
+                     relief="solid", bd=1, bg="#F8F9FB").pack(side="left")
+
+        for col in range(4):
+            av = tk.BooleanVar(value=True)
+            key = band_cols[col][1]
+            self._band_all_vars[key] = av
+            def _make_all_cb(k, v):
+                def _toggle():
+                    for sv in self._band_vars[k]:
+                        sv.set(v.get())
+                return _toggle
+            tk.Checkbutton(band_grid, text="전체", variable=av, bg=self.bg,
+                           font=FONT_SMALL, activebackground=self.bg,
+                           command=_make_all_cb(key, av)).grid(row=2, column=col, padx=10, sticky="ew", pady=(2,2))
+            slot_vars = []
+            for r, slot_lbl in enumerate(TIME_SLOT_LABELS):
+                v2 = tk.BooleanVar(value=True)
+                slot_vars.append(v2)
+            self._band_vars[key] = slot_vars
+
+        for col, (lbl, key) in enumerate(band_cols):
+            for r, slot_lbl in enumerate(TIME_SLOT_LABELS):
+                v2 = self._band_vars[key][r]
+                def _make_slot_cb(k, slot_vs, all_v):
+                    def _toggle():
+                        all_v.set(all(sv.get() for sv in slot_vs))
+                    return _toggle
+                tk.Checkbutton(band_grid, text=slot_lbl, variable=v2, bg=self.bg,
+                              font=FONT_SMALL, activebackground=self.bg,
+                              command=_make_slot_cb(key, self._band_vars[key], self._band_all_vars[key])
+                              ).grid(row=r + 3, column=col, padx=10, sticky="ew", pady=2)
+
+        # ── 구분선 ──
+        sep_line2 = tk.Frame(self.outer, bg=C_BORDER, height=1)
+        sep_line2.grid(row=row_idx, column=0, columnspan=8, sticky="ew", padx=18, pady=(6, 0))
+        row_idx += 1
+
+        # ── 대체 조건 자동 확장 ──
+        expand_outer = tk.Frame(self.outer, bg=self.bg)
+        expand_outer.grid(row=row_idx, column=0, columnspan=8, sticky="ew", padx=18, pady=(14, 14))
+        row_idx += 1
+
+        self.use_expand_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            expand_outer, text="대체 조건 자동 확장 사용 (체크 시 아래 순위 조건으로 검색, 위 일수 설정 무시)",
+            variable=self.use_expand_var, bg=self.bg, font=FONT_SMALL,
+            activebackground=self.bg, command=self._on_expand_toggle
+        ).pack(anchor="w")
+
+        self._expand_frame = tk.Frame(expand_outer, bg=self.bg)
+        self._expand_frame.pack(fill="x", pady=(4, 0))
+
+        hdr_row = tk.Frame(self._expand_frame, bg=self.bg)
+        hdr_row.pack(fill="x")
+        for hdr in ["순위", "귀국일수(일)", "도착~(상한)", "귀국출발(이후~이전)", "도착시간대", ""]:
+            tk.Label(hdr_row, text=hdr, bg=self.bg, font=("맑은 고딕", 8, "bold"),
+                     fg=C_ACCENT, width=10, anchor="w").pack(side="left", padx=2)
+
+        self._expand_rows_frame = tk.Frame(self._expand_frame, bg=self.bg)
+        self._expand_rows_frame.pack(fill="x")
+        self._expand_rows = []
+
+        self._add_row_btn = tk.Button(
+            expand_outer, text="＋ 순위 추가", command=self._add_expand_row,
+            bg="#E8F0FE", fg=C_ACCENT, font=FONT_SMALL, relief="flat", cursor="hand2", padx=8
+        )
+        self._add_row_btn.pack(anchor="w", pady=(4, 0))
+
+        self._expand_frame.pack_forget()
+        self._add_row_btn.pack_forget()
+
+        self.after_id_holder = None  # set by caller for hint updates
+
+    # ──────── 항공사 모드 토글 ────────
+    def _on_mode_change(self, _=None):
+        if self.airline_mode_var.get() == "특정 항공사 지정":
+            self._specific_frame.grid()
+        else:
+            self._specific_frame.grid_remove()
+
+    # ──────── 대체조건 토글 ────────
+    def _on_expand_toggle(self):
+        if self.use_expand_var.get():
+            self._expand_frame.pack(fill="x", pady=(4, 0))
+            self._add_row_btn.pack(anchor="w", pady=(4, 0))
+            if not self._expand_rows:
+                self._add_expand_row(nights_default="2", arr_to="10:10", ret_dep_from="19:00")
+                self._add_expand_row(nights_default="3", arr_to="10:10", ret_dep_from="19:00")
+        else:
+            self._expand_frame.pack_forget()
+            self._add_row_btn.pack_forget()
+
+    def _add_expand_row(self, nights_default="3", arr_to="", ret_dep_from="",
+                        ret_dep_to="", arr_band_default="전체"):
+        tk = self._tk
+        ttk = self._ttk
+        row_idx = len(self._expand_rows) + 1
+        frame = tk.Frame(self._expand_rows_frame, bg=self.bg)
+        frame.pack(fill="x", pady=1)
+
+        tk.Label(frame, text=f"{row_idx}순위", bg=self.bg, font=FONT_SMALL,
+                 width=5).pack(side="left", padx=(0, 2))
+        nights_var = tk.StringVar(value=nights_default)
+        tk.Entry(frame, textvariable=nights_var, width=3, font=FONT_SMALL,
+                 relief="solid", bd=1, bg="#F8F9FB").pack(side="left")
+        tk.Label(frame, text="일", bg=self.bg, font=FONT_SMALL).pack(side="left", padx=(1, 8))
+
+        arr_to_var = tk.StringVar(value=arr_to)
+        tk.Label(frame, text="도착~", bg=self.bg, font=FONT_SMALL).pack(side="left")
+        tk.Entry(frame, textvariable=arr_to_var, width=6, font=FONT_SMALL,
+                 relief="solid", bd=1, bg="#F8F9FB").pack(side="left", padx=(2, 8))
+
+        ret_dep_from_var = tk.StringVar(value=ret_dep_from)
+        tk.Label(frame, text="귀국출발", bg=self.bg, font=FONT_SMALL).pack(side="left")
+        tk.Entry(frame, textvariable=ret_dep_from_var, width=5, font=FONT_SMALL,
+                 relief="solid", bd=1, bg="#F8F9FB").pack(side="left", padx=(2, 1))
+        tk.Label(frame, text="~", bg=self.bg, font=FONT_SMALL).pack(side="left")
+        ret_dep_to_var = tk.StringVar(value=ret_dep_to)
+        tk.Entry(frame, textvariable=ret_dep_to_var, width=5, font=FONT_SMALL,
+                 relief="solid", bd=1, bg="#F8F9FB").pack(side="left", padx=(1, 8))
+
+        arr_band_var = tk.StringVar(value=arr_band_default)
+        ttk.Combobox(frame, textvariable=arr_band_var,
+                     values=["전체", "오전", "오후", "야간", "오후+야간"],
+                     state="readonly", width=8, font=FONT_SMALL).pack(side="left", padx=(2, 8))
+
+        row_data = {
+            "frame": frame, "nights": nights_var, "arr_to": arr_to_var,
+            "ret_dep_from": ret_dep_from_var, "ret_dep_to": ret_dep_to_var,
+            "arr_band": arr_band_var,
+        }
+
+        def _del(rd=row_data):
+            rd["frame"].destroy()
+            self._expand_rows.remove(rd)
+            self._relabel_expand_rows()
+
+        tk.Button(frame, text="✕", command=_del, bg="#FFEEEE", fg=C_WARN,
+                  font=FONT_SMALL, relief="flat", cursor="hand2", padx=4).pack(side="left")
+
+        self._expand_rows.append(row_data)
+
+    def _relabel_expand_rows(self):
+        for i, rd in enumerate(self._expand_rows):
+            for widget in rd["frame"].winfo_children():
+                if isinstance(widget, tk.Label) and "순위" in (widget.cget("text") or ""):
+                    widget.configure(text=f"{i+1}순위")
+                    break
+
+    # ──────── 힌트 갱신 (외부에서 date_from 전달받아 호출) ────────
+    def update_return_hint(self, date_from_str):
+        import datetime as _dt
+        try:
+            df = _dt.datetime.strptime(date_from_str.strip(), "%Y-%m-%d").date()
+            off = int(self.return_offset_var.get()) - 1
+            d1 = df + _dt.timedelta(days=off)
+            if self.extra_return_var.get():
+                d2 = df + _dt.timedelta(days=off + 1)
+                txt = f"  → {df.strftime('%m/%d')} 출발 시 귀국 현지출발일: {d1.strftime('%m/%d')}, {d2.strftime('%m/%d')} 둘 다 검색"
+            else:
+                txt = f"  → {df.strftime('%m/%d')} 출발 시 귀국 현지출발일: {d1.strftime('%m/%d')} 검색"
+            self._return_hint.configure(text=txt)
+        except Exception:
+            self._return_hint.configure(text="")
+
+    def _update_return_hint(self):
+        # 외부에서 등록한 date_from getter 사용
+        getter = getattr(self, "_date_from_getter", None)
+        if getter:
+            val = getter()
+            if val:
+                self.update_return_hint(val)
+
+    def bind_date_from(self, getter_fn):
+        """외부(메인 앱)의 date_from StringVar 값을 가져오는 함수를 등록"""
+        self._date_from_getter = getter_fn
+
+    # ──────── 검증 + config 반환 ────────
+    def validate_and_get(self, messagebox, label_prefix=""):
+        """
+        반환: (return_offset:int, extra_return:bool, config:dict, expand_priorities:list|None) 또는 None(오류)
+        """
+        try:
+            return_offset = int(self.return_offset_var.get()) - 1
+            assert 1 <= return_offset <= 20
+        except Exception:
+            messagebox.showerror("입력 오류", f"{label_prefix}여행 일수를 올바르게 입력하세요 (1~20일).")
+            return None
+
+        mode_disp = self.airline_mode_var.get()
+        mode_map = {
+            "LCC 우선 → FSC 대체": "LCC우선_FSC대체",
+            "LCC만":               "LCC만",
+            "FSC만 (아시아나/대한항공)": "FSC만",
+            "외항사만":            "외항사만",
+            "특정 항공사 지정":    "특정항공사",
+        }
+        airline_mode = mode_map[mode_disp]
+
+        specific = []
+        if airline_mode == "특정항공사":
+            specific = [al for al, v in self._airline_vars.items() if v.get()]
+            if not specific:
+                messagebox.showerror("입력 오류", f"{label_prefix}특정 항공사를 하나 이상 선택하세요.")
+                return None
+
+        def get_band_condition(key):
+            f_str = self._band_custom_from[key].get().strip()
+            t_str = self._band_custom_to[key].get().strip()
+            if f_str or t_str:
+                try:
+                    fh, fm = (int(x) for x in (f_str or "00:00").split(":"))
+                    th, tm = (int(x) for x in (t_str or "24:00").split(":"))
+                    to_min = th * 60 + tm
+                    if to_min == 0:
+                        to_min = 1440
+                    return {"type": "range", "from": fh * 60 + fm, "to": to_min}
+                except Exception:
+                    messagebox.showwarning("입력 오류", f"{label_prefix}{key} 직접입력 형식이 잘못됐습니다.\n예) 06:00 ~ 09:00")
+                    return None
+            slots = [TIME_SLOT_KEYS[i] for i, v in enumerate(self._band_vars[key]) if v.get()]
+            return {"type": "slots", "slots": slots if slots else TIME_SLOT_KEYS[:]}
+
+        dep_cond     = get_band_condition("dep_band")
+        arr_cond     = get_band_condition("arr_band")
+        ret_dep_cond = get_band_condition("ret_dep_band")
+        ret_arr_cond = get_band_condition("ret_arr_band")
+        if None in (dep_cond, arr_cond, ret_dep_cond, ret_arr_cond):
+            return None
+
+        config = {
+            "airline_mode":      airline_mode,
+            "specific_airlines": specific,
+            "dep_band":     dep_cond,
+            "arr_band":     arr_cond,
+            "ret_dep_band": ret_dep_cond,
+            "ret_arr_band": ret_arr_cond,
+        }
+
+        expand_priorities = None
+        if self.use_expand_var.get():
+            if not self._expand_rows:
+                messagebox.showerror("입력 오류", f"{label_prefix}대체 조건 순위를 1개 이상 추가하세요.")
+                return None
+            expand_priorities = []
+            for i, rd in enumerate(self._expand_rows):
+                try:
+                    n = int(rd["nights"].get()) - 1
+                    assert 1 <= n <= 14
+                except Exception:
+                    messagebox.showerror("입력 오류", f"{label_prefix}{i+1}순위 일수를 올바르게 입력하세요.")
+                    return None
+
+                arr_to_str      = rd["arr_to"].get().strip()
+                ret_dep_str     = rd["ret_dep_from"].get().strip()
+                ret_dep_to_str  = rd["ret_dep_to"].get().strip()
+                arr_band_choice = rd["arr_band"].get()
+
+                if arr_to_str:
+                    try:
+                        ah, am = (int(x) for x in arr_to_str.split(":"))
+                        arr_to_min = ah * 60 + am
+                        if arr_to_min == 0:
+                            arr_to_min = 1440
+                        arr_cond_exp = {"type": "range", "from": 0, "to": arr_to_min}
+                    except Exception:
+                        messagebox.showerror("입력 오류", f"{label_prefix}{i+1}순위 도착 상한 형식 오류 (예: 10:10)")
+                        return None
+                else:
+                    band_map2 = {
+                        "전체": ["새벽", "오전", "오후", "야간"],
+                        "오전": ["오전"], "오후": ["오후"], "야간": ["야간"],
+                        "오후+야간": ["오후", "야간"],
+                    }
+                    arr_cond_exp = {"type": "slots", "slots": band_map2.get(arr_band_choice, ["새벽", "오전", "오후", "야간"])}
+
+                if ret_dep_str or ret_dep_to_str:
+                    try:
+                        if ret_dep_str:
+                            rh, rm = (int(x) for x in ret_dep_str.split(":"))
+                            r_from = rh * 60 + rm
+                        else:
+                            r_from = 0
+                        if ret_dep_to_str:
+                            th, tm = (int(x) for x in ret_dep_to_str.split(":"))
+                            r_to = th * 60 + tm
+                            if r_to == 0:
+                                r_to = 1440
+                        else:
+                            r_to = 24 * 60
+                        ret_dep_cond_exp = {"type": "range", "from": r_from, "to": r_to}
+                    except Exception:
+                        messagebox.showerror("입력 오류", f"{label_prefix}{i+1}순위 귀국출발 형식 오류 (예: 19:00)")
+                        return None
+                else:
+                    ret_dep_cond_exp = {"type": "slots", "slots": ["새벽", "오전", "오후", "야간"]}
+
+                expand_priorities.append({
+                    "nights": n,
+                    "arr_cond": arr_cond_exp,
+                    "ret_dep_cond": ret_dep_cond_exp,
+                })
+
+        extra_return = self.extra_return_var.get()
+        return (return_offset, extra_return, config, expand_priorities)
+
+
+# ─────────────────────────────────────────────
 #  메인 앱
 # ─────────────────────────────────────────────
 class GmarketAirApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("G마켓 항공료 자동 추출기  |  투어로 2팀")
-        self.geometry("1180x820")
+        self.geometry("1280x940")
         self.resizable(True, True)
         self.configure(bg=C_BG)
         self._running = False
@@ -166,7 +624,11 @@ class GmarketAirApp(tk.Tk):
             "<Configure>",
             lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all"))
         )
-        main_canvas.create_window((0, 0), window=self._scroll_frame, anchor="nw")
+        canvas_window = main_canvas.create_window((0, 0), window=self._scroll_frame, anchor="nw")
+        main_canvas.bind(
+            "<Configure>",
+            lambda e: main_canvas.itemconfig(canvas_window, width=e.width)
+        )
         main_canvas.configure(yscrollcommand=scrollbar.set, xscrollcommand=scrollbar_x.set)
         scrollbar.pack(side="right", fill="y")
         scrollbar_x.pack(side="bottom", fill="x")
@@ -206,197 +668,69 @@ class GmarketAirApp(tk.Tk):
         self._dest_city_cb.grid(row=0, column=6, **pad)
         dest_country_cb.bind("<<ComboboxSelected>>", lambda e: self._on_country_change("dest"))
 
-        # ── 섹션 2: 기간 ──
-        self._add_section_header("📅  2. 출발 월 / 체류 일수")
-        row2 = self._panel()
+        # ── 섹션 2: 출발 월 ──
+        self._add_section_header("📅  2. 출발 월")
+        date_panel = self._panel()
         now = datetime.date.today()
-        # 출발일 범위 (YYYY-MM-DD)
         default_y = now.year
         default_m = now.month + 1 if now.month < 12 else 1
-        tk.Label(row2, text="출발일", bg=C_PANEL, font=FONT_SUB).grid(row=0, column=0, sticky="w", **pad)
+        tk.Label(date_panel, text="출발일", bg=C_PANEL, font=FONT_SUB).grid(row=0, column=0, sticky="w", **pad)
         self.date_from_var = tk.StringVar(value=f"{default_y}-{default_m:02d}-01")
-        tk.Entry(row2, textvariable=self.date_from_var, width=12, font=FONT_BODY,
+        tk.Entry(date_panel, textvariable=self.date_from_var, width=12, font=FONT_BODY,
                  relief="solid", bd=1, bg="#F8F9FB").grid(row=0, column=1, **pad)
-        tk.Label(row2, text="~", bg=C_PANEL, font=("맑은 고딕", 12)).grid(row=0, column=2)
+        tk.Label(date_panel, text="~", bg=C_PANEL, font=("맑은 고딕", 12)).grid(row=0, column=2)
         self.date_to_var = tk.StringVar(value=f"{default_y}-{default_m:02d}-28")
-        tk.Entry(row2, textvariable=self.date_to_var, width=12, font=FONT_BODY,
+        tk.Entry(date_panel, textvariable=self.date_to_var, width=12, font=FONT_BODY,
                  relief="solid", bd=1, bg="#F8F9FB").grid(row=0, column=3, **pad)
+        tk.Label(date_panel, text="(날짜형식: 2026-07-10)", bg=C_PANEL, fg="#999999",
+                 font=("맑은 고딕", 8)).grid(row=0, column=4, sticky="w", padx=(4,0))
+        self.date_from_var.trace_add("write", lambda *a: self._refresh_all_hints())
 
-        # 귀국: 현지출발 출발 +N일
-        tk.Label(row2, text="여행 일수", bg=C_PANEL, font=FONT_SUB).grid(row=0, column=4, sticky="w", **pad)
-        self.return_offset_var = tk.StringVar(value="3")
-        ro_spin = ttk.Spinbox(row2, from_=1, to=20, textvariable=self.return_offset_var,
-                    width=4, font=FONT_BODY)
-        ro_spin.grid(row=0, column=5, padx=2)
-        tk.Label(row2, text="일", bg=C_PANEL, font=FONT_BODY).grid(row=0, column=6, sticky="w")
+        # ── 섹션 3: 검색 조건 (단일 모드 / 세트 모드 토글) ──
+        self._add_section_header("✈  3. 검색 조건")
 
-        # 추가 귀국일 검색 (동남아 새벽도착 대응)
-        self.extra_return_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(row2, text="+1일도 함께 검색 (귀국 현지출발이 하루 빠른 새벽도착편 비교용)",
-                       variable=self.extra_return_var, bg=C_PANEL, font=FONT_SMALL,
-                       activebackground=C_PANEL, command=self._update_return_hint
-                       ).grid(row=1, column=0, columnspan=9, sticky="w", padx=14, pady=(2,0))
+        # 단일 모드 컨테이너
+        self._single_container = tk.Frame(self._scroll_frame, bg=C_BG)
+        self._single_container.pack(fill="x")
+        self._single_block = ConditionBlock(self._single_container, bg=C_PANEL,
+                                            show_set_header=False, default_nights="3")
+        self._single_block.bind_date_from(lambda: self.date_from_var.get())
 
-        # 실시간 안내문 (검색되는 귀국 ADATE 미리보기)
-        self._return_hint = tk.Label(row2, text="", bg=C_PANEL, fg=C_ACCENT2,
-                                     font=("맑은 고딕", 8))
-        self._return_hint.grid(row=2, column=0, columnspan=9, sticky="w", padx=16, pady=(0,2))
-
-        # 안내문
-        tk.Label(row2, text="(귀국일은 현지 출발일 기준. 같은 한국일정도 새벽도착편은 현지출발이 하루 빨라 +1일 체크 권장. 날짜형식: 2026-07-10)",
-                 bg=C_PANEL, fg="#999999", font=("맑은 고딕", 8)
-                 ).grid(row=3, column=0, columnspan=9, sticky="w", padx=16, pady=(0,4))
-
-        # 입력 변경 시 안내 갱신
-        self.return_offset_var.trace_add("write", lambda *a: self._update_return_hint())
-        self.date_from_var.trace_add("write", lambda *a: self._update_return_hint())
-        self.after(100, self._update_return_hint)
-
-        # ── 섹션 2-1: 대체 조건 자동 확장 ──
-        self._add_section_header("🔄  2-1. 대체 조건 자동 확장 (선택)")
-        expand_panel = self._panel()
-
-        self.use_expand_var = tk.BooleanVar(value=False)
-        expand_toggle = tk.Checkbutton(
-            expand_panel, text="사용 (체크 시 아래 순위 조건으로 검색, 위 일수 설정 무시)",
-            variable=self.use_expand_var, bg=C_PANEL, font=FONT_BODY,
-            activebackground=C_PANEL, command=self._on_expand_toggle
+        # 세트 모드 안내 + 전환 버튼 바
+        self._toggle_bar = tk.Frame(self._scroll_frame, bg=C_BG)
+        self._toggle_bar.pack(fill="x", padx=16, pady=(6, 0))
+        self._toggle_label = tk.Label(
+            self._toggle_bar,
+            text="여러 조건의 항공료를 동시에 추출하고 싶다면 검색 조건 세트를 활성화하세요",
+            bg=C_BG, fg=C_ACCENT2, font=FONT_SMALL
         )
-        expand_toggle.grid(row=0, column=0, sticky="w", padx=16, pady=(8,4))
-
-        # 순위 테이블 프레임
-        self._expand_frame = tk.Frame(expand_panel, bg=C_PANEL)
-        self._expand_frame.grid(row=1, column=0, sticky="ew", padx=16, pady=(0,8))
-
-        # 헤더
-        for ci, hdr in enumerate(["순위", "귀국일수(일)", "도착 ~(상한)", "귀국출발 (이후~이전)", "도착 시간대(상한 비울 때)", ""]):
-            tk.Label(self._expand_frame, text=hdr, bg=C_PANEL, font=FONT_SUB,
-                     fg=C_ACCENT).grid(row=0, column=ci, padx=8, pady=(4,2), sticky="w")
-
-        self._expand_rows = []   # list of dict per priority row
-        self._expand_row_frames = []
-
-        # 기본 순위 2개
-        self._add_expand_row(nights_default="2", arr_to="10:10", ret_dep_from="19:00", ret_dep_to="", arr_band_default="전체")
-        self._add_expand_row(nights_default="3", arr_to="10:10", ret_dep_from="19:00", ret_dep_to="", arr_band_default="전체")
-        self._add_expand_row(nights_default="3", arr_to="",      ret_dep_from="19:00", ret_dep_to="", arr_band_default="오후+야간")
-
-        # + 순위 추가 버튼
-        self._add_row_btn = tk.Button(
-            expand_panel, text="＋ 순위 추가", command=self._add_expand_row,
-            bg="#E8F0FE", fg=C_ACCENT, font=FONT_SMALL, relief="flat", cursor="hand2", padx=8
+        self._toggle_label.pack(side="left")
+        self._toggle_btn = tk.Button(
+            self._toggle_bar, text="📑  검색 조건 세트 활성화", command=self._toggle_set_mode,
+            bg="#E8F0FE", fg=C_ACCENT, font=FONT_SMALL, relief="flat", cursor="hand2", padx=10, pady=4
         )
-        self._add_row_btn.grid(row=2, column=0, sticky="w", padx=16, pady=(0,8))
+        self._toggle_btn.pack(side="right")
 
-        # 처음엔 숨김
-        self._expand_frame.grid_remove()
-        self._add_row_btn.grid_remove()
+        # 세트 모드 컨테이너 (처음엔 숨김)
+        self._set_mode = False
+        self._set_blocks = []  # ConditionBlock 리스트
+        self._sets_container = tk.Frame(self._scroll_frame, bg=C_BG)
 
-        # ── 섹션 3: 항공사 ──
-        self._add_section_header("✈  3. 항공사 조건")
-        row3 = self._panel()
-        tk.Label(row3, text="항공사 모드", bg=C_PANEL, font=FONT_SUB).grid(row=0, column=0, sticky="w", **pad)
-        self.airline_mode_var = tk.StringVar(value=AIRLINE_MODES[0])
-        mode_cb = ttk.Combobox(row3, textvariable=self.airline_mode_var,
-                               values=AIRLINE_MODES, state="readonly", width=26)
-        mode_cb.grid(row=0, column=1, **pad)
-        mode_cb.bind("<<ComboboxSelected>>", self._on_mode_change)
+        sets_hdr = tk.Frame(self._sets_container, bg=C_BG)
+        sets_hdr.pack(fill="x", padx=16, pady=(8, 2))
+        tk.Label(sets_hdr, text="세트별로 결과가 시트로 분리되어 같은 엑셀 파일에 저장됩니다.",
+                 bg=C_BG, fg="#888888", font=("맑은 고딕", 8)).pack(side="left")
+        tk.Button(sets_hdr, text="＋ 세트 추가", command=self._add_condition_set,
+                  bg="#E8F0FE", fg=C_ACCENT, font=FONT_SMALL, relief="flat", cursor="hand2", padx=8
+                  ).pack(side="right")
 
-        # 특정 항공사 선택 프레임 (여러 줄로 배치)
-        self._specific_frame = tk.Frame(row3, bg=C_PANEL)
-        self._specific_frame.grid(row=1, column=0, columnspan=6, sticky="w", padx=16, pady=4)
-        tk.Label(self._specific_frame, text="항공사 선택 (복수 가능):",
-                 bg=C_PANEL, font=FONT_SMALL).grid(row=0, column=0, columnspan=6, sticky="w", pady=(0,2))
-        self._airline_vars = {}
-        PER_ROW = 6  # 한 줄에 6개씩
-        for i, al in enumerate(SPECIFIC_AIRLINES):
-            v = tk.BooleanVar(value=False)
-            self._airline_vars[al] = v
-            cb = tk.Checkbutton(self._specific_frame, text=al, variable=v,
-                                bg=C_PANEL, font=FONT_SMALL, activebackground=C_PANEL,
-                                anchor="w", width=13)
-            r = 1 + (i // PER_ROW)
-            c = i % PER_ROW
-            cb.grid(row=r, column=c, sticky="w", padx=2, pady=1)
-        self._specific_frame.grid_remove()
+        self._sets_list_frame = tk.Frame(self._sets_container, bg=C_BG)
+        self._sets_list_frame.pack(fill="x", padx=16)
 
-        # ── 섹션 4: 시간대 조건 ──
-        self._add_section_header("🕐  4. 시간대 조건")
-        row4 = self._panel()
-        band_cols = [
-            ("가는편 출발",  "dep_band"),
-            ("가는편 도착",  "arr_band"),
-            ("오는편 출발",  "ret_dep_band"),
-            ("오는편 도착",  "ret_arr_band"),
-        ]
-        self._band_vars = {}
-        self._band_all_vars = {}
-        self._band_custom_from = {}   # 직접입력 시작
-        self._band_custom_to   = {}   # 직접입력 종료
+        self._sets_container.pack_forget()  # 처음엔 단일 모드
 
-        # ── 헤더 ──
-        for col, (lbl, key) in enumerate(band_cols):
-            tk.Label(row4, text=lbl, bg=C_PANEL, font=FONT_SUB,
-                     width=13, anchor="center").grid(row=0, column=col, padx=10, pady=(8,2))
-
-        # ── 직접 입력 행 ──
-        tk.Label(row4, text="", bg=C_PANEL, width=2).grid(row=1, column=0, padx=(10,0))
-        for col, (lbl, key) in enumerate(band_cols):
-            frame_direct = tk.Frame(row4, bg=C_PANEL)
-            frame_direct.grid(row=1, column=col, padx=10, pady=(2,4), sticky="w")
-            tk.Label(frame_direct, text="직접입력:", bg=C_PANEL, fg="#555", font=FONT_SMALL).pack(side="left")
-            from_var = tk.StringVar(value="")
-            to_var   = tk.StringVar(value="")
-            self._band_custom_from[key] = from_var
-            self._band_custom_to[key]   = to_var
-            tk.Entry(frame_direct, textvariable=from_var, width=6, font=FONT_SMALL,
-                     relief="solid", bd=1, bg="#F8F9FB").pack(side="left", padx=(2,0))
-            tk.Label(frame_direct, text="~", bg=C_PANEL, font=FONT_SMALL).pack(side="left", padx=1)
-            tk.Entry(frame_direct, textvariable=to_var, width=6, font=FONT_SMALL,
-                     relief="solid", bd=1, bg="#F8F9FB").pack(side="left")
-            tk.Label(frame_direct, text="(비우면 아래 조건 사용)", bg=C_PANEL,
-                     fg="#AAAAAA", font=("맑은 고딕", 7)).pack(side="left", padx=(3,0))
-
-        # ── 구분선 ──
-        sep = tk.Frame(row4, bg=C_BORDER, height=1)
-        sep.grid(row=2, column=0, columnspan=4, sticky="ew", padx=10, pady=2)
-
-        # ── 전체 체크박스 ──
-        for col, (lbl, key) in enumerate(band_cols):
-            av = tk.BooleanVar(value=True)
-            self._band_all_vars[key] = av
-            def _make_all_cb(k, v):
-                def _toggle():
-                    all_on = v.get()
-                    for sv in self._band_vars[k]:
-                        sv.set(all_on)
-                return _toggle
-            cb = tk.Checkbutton(row4, text="전체", variable=av, bg=C_PANEL,
-                                font=FONT_SMALL, activebackground=C_PANEL,
-                                command=_make_all_cb(key, av))
-            cb.grid(row=3, column=col, padx=10, sticky="w")
-            slot_vars = []
-            for r, slot_lbl in enumerate(TIME_SLOT_LABELS):
-                v2 = tk.BooleanVar(value=True)
-                slot_vars.append(v2)
-            self._band_vars[key] = slot_vars
-
-        # ── 시간대별 체크박스 ──
-        for col, (lbl, key) in enumerate(band_cols):
-            for r, slot_lbl in enumerate(TIME_SLOT_LABELS):
-                v2 = self._band_vars[key][r]
-                def _make_slot_cb(k, slot_vs, all_v):
-                    def _toggle():
-                        all_v.set(all(sv.get() for sv in slot_vs))
-                    return _toggle
-                cb = tk.Checkbutton(row4, text=slot_lbl, variable=v2, bg=C_PANEL,
-                                    font=FONT_SMALL, activebackground=C_PANEL,
-                                    command=_make_slot_cb(key, self._band_vars[key], self._band_all_vars[key]))
-                cb.grid(row=r+4, column=col, padx=10, sticky="w", pady=1)
-        tk.Label(row4, text="", bg=C_PANEL).grid(row=9, column=0)
-
-        # ── 섹션 5: 저장 위치 ──
-        self._add_section_header("💾  5. 저장 위치")
+        # ── 섹션 4: 저장 위치 ──
+        self._add_section_header("💾  4. 저장 위치")
         row5 = self._panel()
         self.out_dir_var = tk.StringVar(value=get_default_output_dir())
         tk.Entry(row5, textvariable=self.out_dir_var, width=46, font=FONT_BODY,
@@ -406,7 +740,7 @@ class GmarketAirApp(tk.Tk):
                   relief="flat", cursor="hand2", padx=8).grid(row=0, column=1, **pad)
 
         # ── 기타 옵션 ──
-        self._add_section_header("⚙  6. 기타 옵션")
+        self._add_section_header("⚙  5. 기타 옵션")
         row6 = self._panel()
         self.show_browser_var = tk.BooleanVar(value=False)
         tk.Checkbutton(row6, text="브라우저 창 표시 (문제 확인용)",
@@ -480,94 +814,68 @@ class GmarketAirApp(tk.Tk):
         f.pack(fill="x", padx=16, pady=2)
         return f
 
-    # ──────── 이벤트 ────────
-    def _on_expand_toggle(self):
-        if self.use_expand_var.get():
-            self._expand_frame.grid()
-            self._add_row_btn.grid()
+    # ──────── 단일/세트 모드 전환 ────────
+    def _toggle_set_mode(self):
+        self._set_mode = not self._set_mode
+        if self._set_mode:
+            self._single_container.pack_forget()
+            self._toggle_label.configure(text="단일 조건으로 검색하고 싶다면 세트 모드를 비활성화하세요")
+            self._toggle_btn.configure(text="📑  단일 모드로 전환")
+            self._sets_container.pack(fill="x", after=self._toggle_bar)
+            if not self._set_blocks:
+                self._add_condition_set()
         else:
-            self._expand_frame.grid_remove()
-            self._add_row_btn.grid_remove()
+            self._sets_container.pack_forget()
+            self._toggle_label.configure(text="여러 조건의 항공료를 동시에 추출하고 싶다면 검색 조건 세트를 활성화하세요")
+            self._toggle_btn.configure(text="📑  검색 조건 세트 활성화")
+            self._single_container.pack(fill="x", before=self._toggle_bar)
 
-    def _add_expand_row(self, nights_default="3", arr_to="", ret_dep_from="",
-                        ret_dep_to="", arr_band_default="전체"):
-        row_idx = len(self._expand_rows) + 1  # 헤더 행 다음부터
-        frame = tk.Frame(self._expand_frame, bg=C_PANEL)
-        frame.grid(row=row_idx, column=0, columnspan=6, sticky="ew", pady=1)
+    def _add_condition_set(self):
+        idx = len(self._set_blocks) + 1
+        def _make_delete(block_ref):
+            def _del():
+                block_ref.outer.destroy()
+                self._set_blocks.remove(block_ref)
+                self._relabel_condition_sets()
+            return _del
+        block = ConditionBlock(self._sets_list_frame, bg=C_LCC_BG if idx % 2 else C_FSC_BG,
+                               show_set_header=True, set_index=idx,
+                               on_delete=lambda: None, default_nights=str(2 + idx))
+        block.on_delete_fn = _make_delete(block)
+        self._rebind_delete_button(block)
+        block.bind_date_from(lambda: self.date_from_var.get())
+        self._set_blocks.append(block)
 
-        # 순위 번호
-        tk.Label(frame, text=f"{row_idx}순위", bg=C_PANEL, font=FONT_SMALL,
-                 width=5).pack(side="left", padx=(0,4))
+    def _rebind_delete_button(self, block):
+        # 헤더 안의 삭제버튼을 찾아 command 재설정
+        def find_and_bind(widget):
+            for child in widget.winfo_children():
+                if isinstance(child, tk.Button) and "세트 삭제" in (child.cget("text") or ""):
+                    child.configure(command=block.on_delete_fn)
+                    return True
+                if find_and_bind(child):
+                    return True
+            return False
+        find_and_bind(block.outer)
 
-        # 일수
-        nights_var = tk.StringVar(value=nights_default)
-        tk.Entry(frame, textvariable=nights_var, width=3, font=FONT_SMALL,
-                 relief="solid", bd=1, bg="#F8F9FB").pack(side="left")
-        tk.Label(frame, text="일", bg=C_PANEL, font=FONT_SMALL).pack(side="left", padx=(1,10))
+    def _relabel_condition_sets(self):
+        for i, block in enumerate(self._set_blocks, 1):
+            def find_and_relabel(widget, new_idx):
+                for child in widget.winfo_children():
+                    if isinstance(child, tk.Label):
+                        txt = child.cget("text") or ""
+                        if txt.startswith("세트 ") and len(txt) <= 5:
+                            child.configure(text=f"세트 {new_idx}")
+                        elif txt.isdigit():
+                            child.configure(text=str(new_idx))
+                    find_and_relabel(child, new_idx)
+            find_and_relabel(block.outer, i)
 
-        # 도착 상한
-        arr_to_var = tk.StringVar(value=arr_to)
-        tk.Label(frame, text="도착~", bg=C_PANEL, font=FONT_SMALL).pack(side="left")
-        tk.Entry(frame, textvariable=arr_to_var, width=7, font=FONT_SMALL,
-                 relief="solid", bd=1, bg="#F8F9FB").pack(side="left", padx=(2,10))
-
-        # 귀국출발 하한 ~ 상한
-        ret_dep_from_var = tk.StringVar(value=ret_dep_from)
-        tk.Label(frame, text="귀국출발", bg=C_PANEL, font=FONT_SMALL).pack(side="left")
-        tk.Entry(frame, textvariable=ret_dep_from_var, width=6, font=FONT_SMALL,
-                 relief="solid", bd=1, bg="#F8F9FB").pack(side="left", padx=(2,1))
-        tk.Label(frame, text="이후~", bg=C_PANEL, font=FONT_SMALL).pack(side="left")
-        ret_dep_to_var = tk.StringVar(value=ret_dep_to)
-        tk.Entry(frame, textvariable=ret_dep_to_var, width=6, font=FONT_SMALL,
-                 relief="solid", bd=1, bg="#F8F9FB").pack(side="left", padx=(1,1))
-        tk.Label(frame, text="이전", bg=C_PANEL, font=FONT_SMALL).pack(side="left", padx=(0,10))
-
-        # 도착 시간대 (상한 없을 때)
-        arr_band_choices = ["전체", "오전", "오후", "야간", "오후+야간"]
-        arr_band_var = tk.StringVar(value=arr_band_default)
-        tk.Label(frame, text="도착시간대:", bg=C_PANEL, font=FONT_SMALL).pack(side="left")
-        ttk.Combobox(frame, textvariable=arr_band_var, values=arr_band_choices,
-                     state="readonly", width=8, font=FONT_SMALL).pack(side="left", padx=(2,10))
-
-        # 삭제 버튼
-        row_data = {
-            "frame": frame,
-            "nights": nights_var,
-            "arr_to": arr_to_var,
-            "ret_dep_from": ret_dep_from_var,
-            "ret_dep_to": ret_dep_to_var,
-            "arr_band": arr_band_var,
-        }
-        def _del(rd=row_data):
-            rd["frame"].destroy()
-            self._expand_rows.remove(rd)
-            self._relabel_expand_rows()
-        tk.Button(frame, text="✕", command=_del, bg="#FFEEEE", fg=C_WARN,
-                  font=FONT_SMALL, relief="flat", cursor="hand2", padx=4).pack(side="left")
-
-        self._expand_rows.append(row_data)
-
-    def _relabel_expand_rows(self):
-        for i, rd in enumerate(self._expand_rows):
-            for widget in rd["frame"].winfo_children():
-                if isinstance(widget, tk.Label) and "순위" in (widget.cget("text") or ""):
-                    widget.configure(text=f"{i+1}순위")
-                    break
-
-    def _update_return_hint(self):
-        import datetime as _dt
-        try:
-            df = _dt.datetime.strptime(self.date_from_var.get().strip(), "%Y-%m-%d").date()
-            off = int(self.return_offset_var.get()) - 1  # 출발일 포함 총 일수 → 오프셋
-            d1 = df + _dt.timedelta(days=off)
-            if self.extra_return_var.get():
-                d2 = df + _dt.timedelta(days=off + 1)
-                txt = f"  → {df.strftime('%m/%d')} 출발 시 귀국 현지출발일: {d1.strftime('%m/%d')}, {d2.strftime('%m/%d')} 둘 다 검색"
-            else:
-                txt = f"  → {df.strftime('%m/%d')} 출발 시 귀국 현지출발일: {d1.strftime('%m/%d')} 검색"
-            self._return_hint.configure(text=txt)
-        except Exception:
-            self._return_hint.configure(text="")
+    def _refresh_all_hints(self):
+        df = self.date_from_var.get()
+        self._single_block.update_return_hint(df)
+        for block in self._set_blocks:
+            block.update_return_hint(df)
 
     def _on_country_change(self, which: str):
         if which == "origin":
@@ -580,12 +888,6 @@ class GmarketAirApp(tk.Tk):
             cities = list(AIRPORTS[country].keys())
             self._dest_city_cb["values"] = cities
             self.dest_city_var.set(cities[0])
-
-    def _on_mode_change(self, _=None):
-        if self.airline_mode_var.get() == "특정 항공사 지정":
-            self._specific_frame.grid()
-        else:
-            self._specific_frame.grid_remove()
 
     def _choose_dir(self):
         d = filedialog.askdirectory(initialdir=self.out_dir_var.get())
@@ -622,12 +924,9 @@ class GmarketAirApp(tk.Tk):
         try:
             date_from = _dt.datetime.strptime(self.date_from_var.get().strip(), "%Y-%m-%d").date()
             date_to   = _dt.datetime.strptime(self.date_to_var.get().strip(), "%Y-%m-%d").date()
-            return_offset = int(self.return_offset_var.get()) - 1  # 출발일 포함 총 일수 → 오프셋
             assert date_from <= date_to
-            assert 1 <= return_offset <= 20
         except Exception:
-            messagebox.showerror("입력 오류",
-                "출발일 형식(2026-07-10), 시작일≤종료일, 귀국일수(1~20)를 올바르게 입력하세요.")
+            messagebox.showerror("입력 오류", "출발일 형식(2026-07-10), 시작일≤종료일을 올바르게 입력하세요.")
             return None
 
         origin_city = self.origin_city_var.get()
@@ -641,142 +940,44 @@ class GmarketAirApp(tk.Tk):
         origin = AIRPORTS[origin_country][origin_city]
         dest   = AIRPORTS[dest_country][dest_city]
 
-        mode_disp = self.airline_mode_var.get()
-        mode_map  = {
-            "LCC 우선 → FSC 대체": "LCC우선_FSC대체",
-            "LCC만":               "LCC만",
-            "FSC만 (아시아나/대한항공)": "FSC만",
-            "외항사만":            "외항사만",
-            "특정 항공사 지정":    "특정항공사",
-        }
-        airline_mode = mode_map[mode_disp]
+        sets = []  # [{"label": str, "return_offset": int, "extra_return": bool, "config": dict, "expand_priorities": list|None}, ...]
 
-        specific = []
-        if airline_mode == "특정항공사":
-            specific = [al for al, v in self._airline_vars.items() if v.get()]
-            if not specific:
-                messagebox.showerror("입력 오류", "특정 항공사를 하나 이상 선택하세요.")
+        if self._set_mode:
+            if not self._set_blocks:
+                messagebox.showerror("입력 오류", "검색 조건 세트를 1개 이상 추가하세요.")
                 return None
-
-        def parse_time_str(s):
-            """HH:MM 문자열 → 분(int), 실패시 None"""
-            s = s.strip()
-            if not s:
-                return None
-            import re
-            m = re.match(r"^(\d{1,2}):?(\d{2})$", s.replace(":", "").zfill(4))
-            if m:
-                h, mn = int(s.split(":")[0]), int(s.split(":")[1]) if ":" in s else (int(s[:2]), int(s[2:]))
-                return h * 60 + mn
-            return None
-
-        def get_band_condition(key):
-            """직접입력 있으면 (from_min, to_min) 튜플, 없으면 슬롯 리스트"""
-            f_str = self._band_custom_from[key].get().strip()
-            t_str = self._band_custom_to[key].get().strip()
-            if f_str or t_str:
-                # 직접입력 우선
-                try:
-                    fh, fm = (int(x) for x in (f_str or "00:00").split(":"))
-                    th, tm = (int(x) for x in (t_str or "24:00").split(":"))
-                    to_min = th * 60 + tm
-                    if to_min == 0: to_min = 1440  # 00:00 = 자정(24:00)
-                    return {"type": "range", "from": fh * 60 + fm, "to": to_min}
-                except Exception:
-                    messagebox.showwarning("입력 오류", key + " 직접입력 형식이 잘못됐습니다.\n예) 06:00 ~ 09:00")
+            for i, block in enumerate(self._set_blocks, 1):
+                result = block.validate_and_get(messagebox, label_prefix=f"[세트{i}] ")
+                if result is None:
                     return None
-            # 체크박스
-            slots = [TIME_SLOT_KEYS[i] for i, v in enumerate(self._band_vars[key]) if v.get()]
-            return {"type": "slots", "slots": slots if slots else TIME_SLOT_KEYS[:]}
-
-        dep_cond     = get_band_condition("dep_band")
-        arr_cond     = get_band_condition("arr_band")
-        ret_dep_cond = get_band_condition("ret_dep_band")
-        ret_arr_cond = get_band_condition("ret_arr_band")
-        if None in (dep_cond, arr_cond, ret_dep_cond, ret_arr_cond):
-            return None
-
-        config = {
-            "airline_mode":      airline_mode,
-            "specific_airlines": specific,
-            "dep_band":     dep_cond,
-            "arr_band":     arr_cond,
-            "ret_dep_band": ret_dep_cond,
-            "ret_arr_band": ret_arr_cond,
-        }
-
-        # ── 대체 조건 파싱 ──
-        expand_priorities = None
-        if self.use_expand_var.get():
-            if not self._expand_rows:
-                messagebox.showerror("입력 오류", "대체 조건 순위를 1개 이상 추가하세요.")
-                return None
-            expand_priorities = []
-            for i, rd in enumerate(self._expand_rows):
-                try:
-                    n = int(rd["nights"].get()) - 1  # 출발일 포함 총 일수 → 오프셋
-                    assert 1 <= n <= 14
-                except Exception:
-                    messagebox.showerror("입력 오류", f"{i+1}순위 일수를 올바르게 입력하세요.")
-                    return None
-
-                arr_to_str      = rd["arr_to"].get().strip()
-                ret_dep_str     = rd["ret_dep_from"].get().strip()
-                ret_dep_to_str  = rd["ret_dep_to"].get().strip()
-                arr_band_choice = rd["arr_band"].get()
-
-                # 도착 상한 파싱
-                if arr_to_str:
-                    try:
-                        ah, am = (int(x) for x in arr_to_str.split(":"))
-                        arr_to_min = ah * 60 + am
-                        if arr_to_min == 0: arr_to_min = 1440  # 00:00 = 자정
-                        arr_cond_exp = {"type": "range", "from": 0, "to": arr_to_min}
-                    except Exception:
-                        messagebox.showerror("입력 오류", f"{i+1}순위 도착 상한 형식 오류 (예: 10:10)")
-                        return None
-                else:
-                    band_map2 = {
-                        "전체": ["새벽","오전","오후","야간"],
-                        "오전": ["오전"], "오후": ["오후"], "야간": ["야간"],
-                        "오후+야간": ["오후","야간"],
-                    }
-                    arr_cond_exp = {"type": "slots", "slots": band_map2.get(arr_band_choice, ["새벽","오전","오후","야간"])}
-
-                # 귀국출발 하한~상한 파싱
-                if ret_dep_str or ret_dep_to_str:
-                    try:
-                        if ret_dep_str:
-                            rh, rm = (int(x) for x in ret_dep_str.split(":"))
-                            r_from = rh * 60 + rm
-                        else:
-                            r_from = 0
-                        if ret_dep_to_str:
-                            th, tm = (int(x) for x in ret_dep_to_str.split(":"))
-                            r_to = th * 60 + tm
-                            if r_to == 0: r_to = 1440  # 00:00 = 자정
-                        else:
-                            r_to = 24 * 60
-                        ret_dep_cond_exp = {"type": "range", "from": r_from, "to": r_to}
-                    except Exception:
-                        messagebox.showerror("입력 오류", f"{i+1}순위 귀국출발 형식 오류 (예: 19:00)")
-                        return None
-                else:
-                    ret_dep_cond_exp = {"type": "slots", "slots": ["새벽","오전","오후","야간"]}
-
-                expand_priorities.append({
-                    "nights": n,
-                    "arr_cond": arr_cond_exp,
-                    "ret_dep_cond": ret_dep_cond_exp,
+                return_offset, extra_return, config, expand_priorities = result
+                mode_label = config["airline_mode"]
+                label = f"세트{i}_{return_offset+1}일_{mode_label}"
+                sets.append({
+                    "label": label,
+                    "return_offset": return_offset,
+                    "extra_return": extra_return,
+                    "config": config,
+                    "expand_priorities": expand_priorities,
                 })
+        else:
+            result = self._single_block.validate_and_get(messagebox)
+            if result is None:
+                return None
+            return_offset, extra_return, config, expand_priorities = result
+            sets.append({
+                "label": "결과",
+                "return_offset": return_offset,
+                "extra_return": extra_return,
+                "config": config,
+                "expand_priorities": expand_priorities,
+            })
 
         return {
             "origin": origin, "dest": dest,
             "date_from": date_from, "date_to": date_to,
-            "return_offset": return_offset,
-            "extra_return": self.extra_return_var.get(),
-            "config": config,
-            "expand_priorities": expand_priorities,
+            "sets": sets,
+            "multi_mode": self._set_mode,
             "show_browser": self.show_browser_var.get(),
             "out_dir": self.out_dir_var.get(),
         }
@@ -802,154 +1003,175 @@ class GmarketAirApp(tk.Tk):
         self._log_msg("⏹ 중지 요청됨. 현재 날짜 완료 후 종료됩니다.", "err")
 
     def _run_scrape(self, p):
-        origin   = p["origin"]
-        dest     = p["dest"]
+        origin    = p["origin"]
+        dest      = p["dest"]
         date_from = p["date_from"]
         date_to   = p["date_to"]
-        config   = p["config"]
-        show     = p["show_browser"]
-        out_dir  = p["out_dir"]
-        expand_priorities = p.get("expand_priorities")
-        extra_return = p.get("extra_return", False)
+        show      = p["show_browser"]
+        out_dir   = p["out_dir"]
+        sets      = p["sets"]
+        multi_mode = p["multi_mode"]
 
         from datetime import timedelta
         from scraper_core import (init_driver, build_url, fetch_flights,
                                   select_best, parse_price, calc_per_person, in_band,
-                                  reset_debug)
+                                  reset_debug, save_excel, save_excel_multi)
         reset_debug()
 
-        # 귀국 오프셋 = 출발 +N일 (사용자 직접 입력)
-        base_offset = p["return_offset"]
-        # 추가 귀국일 검색 시 [기본, 기본+1] 둘 다 검색
-        offsets = [base_offset, base_offset + 1] if extra_return else [base_offset]
-
-        # 출발일 리스트 생성
         date_list = []
         d = date_from
         while d <= date_to:
             date_list.append(d)
             d += timedelta(days=1)
         total_days = len(date_list)
+        total_work = total_days * len(sets)
 
         fname = f"gmarket_{origin}_{dest}_{date_from.strftime('%Y%m%d')}_{date_to.strftime('%Y%m%d')}.xlsx"
         out_path = os.path.join(out_dir, fname)
 
         self._log_msg(
-            f"🛫 추출 시작: {origin} → {dest}  |  {date_from} ~ {date_to}  |  귀국 출발+{base_offset}일  |  총 {total_days}일",
+            f"🛫 추출 시작: {origin} → {dest}  |  {date_from} ~ {date_to}  |  세트 {len(sets)}개  |  총 {total_days}일",
             "info"
         )
-        if expand_priorities:
-            self._log_msg(f"  🔄 대체 조건 모드: {len(expand_priorities)}개 순위 적용", "info")
 
         try:
             driver = init_driver(show=show)
-            rows = []
+            rows_by_set = []
+            work_done = 0
 
-            for idx, dep_date in enumerate(date_list, 1):
-                if not self._running:
-                    self._log_msg("⏹ 중지됨.", "err")
-                    break
+            for set_idx, s in enumerate(sets, 1):
+                config             = s["config"]
+                expand_priorities  = s["expand_priorities"]
+                base_offset        = s["return_offset"]
+                extra_return       = s["extra_return"]
+                offsets            = [base_offset, base_offset + 1] if extra_return else [base_offset]
+                label              = s["label"]
+                set_prefix         = f"[{label}] " if multi_mode else ""
 
-                self._log_msg(
-                    f"  {dep_date.strftime('%Y-%m-%d')} ({dep_date.strftime('%a')}) 검색 중..."
-                )
-
-                best = None
-                used_offset = base_offset
-                used_priority = None
-
+                if multi_mode:
+                    self._log_msg(f"\n▶ {label} 검색 시작 (귀국 출발+{base_offset}일)", "info")
                 if expand_priorities:
-                    for pri_idx, pri in enumerate(expand_priorities):
-                        # 순위별 일수를 귀국 오프셋으로 사용 (n일 → 출발+n일 귀국)
-                        n = pri["nights"]
-                        off = n
-                        arr_date_try = dep_date + timedelta(days=off)
-                        url = build_url(origin, dest,
-                                        dep_date.strftime("%Y%m%d"),
-                                        arr_date_try.strftime("%Y%m%d"))
-                        flights = fetch_flights(driver, url, self._log_msg)
-                        if not flights:
-                            continue
-                        trial_config = dict(config)
-                        trial_config["arr_band"]     = pri["arr_cond"]
-                        trial_config["ret_dep_band"] = pri["ret_dep_cond"]
-                        trial_config["ret_arr_band"] = {"type":"slots","slots":["새벽","오전","오후","야간"]}
-                        candidate = select_best(flights, trial_config)
-                        if candidate:
-                            best = candidate
-                            used_offset = off
-                            used_priority = pri_idx + 1
-                            break
-                    arr_date = dep_date + timedelta(days=used_offset)
-                else:
-                    # 여러 귀국 오프셋으로 각각 검색 후 최저가 선택
-                    best = None
-                    best_arr_date = dep_date + timedelta(days=base_offset)
-                    best_total = None
-                    for off in offsets:
-                        arr_try = dep_date + timedelta(days=off)
-                        url = build_url(origin, dest,
-                                        dep_date.strftime("%Y%m%d"),
-                                        arr_try.strftime("%Y%m%d"))
-                        flights = fetch_flights(driver, url, self._log_msg)
-                        cand = select_best(flights, config) if flights else None
-                        if cand:
-                            cand_total = parse_price(cand.get("cardPrice", "0"))
-                            if best is None or (cand_total and cand_total < best_total):
-                                best = cand
-                                best_total = cand_total
-                                best_arr_date = arr_try
-                    arr_date = best_arr_date
+                    self._log_msg(f"  🔄 {set_prefix}대체 조건 모드: {len(expand_priorities)}개 순위 적용", "info")
 
-                if best:
-                    actual_price = best.get("cardPrice", "")
-                    best["price"] = actual_price
-                    total4 = parse_price(actual_price)
-                    per1   = calc_per_person(total4)
-                    pri_note = f" [{used_priority}순위]" if used_priority else ""
-                    rows.append({
-                        "dep_date": dep_date.strftime("%Y-%m-%d"),
-                        "arr_date": arr_date.strftime("%Y-%m-%d"),
-                        "airline":  best["airline"],
-                        "dep":  best["dep"],  "arr":  best["arr"],
-                        "rDep": best.get("rDep",""), "rArr": best.get("rArr",""),
-                        "total4": total4, "per1": per1,
-                        "seller": pri_note.strip(),
-                        "found": True,
-                    })
+                rows = []
+
+                for idx, dep_date in enumerate(date_list, 1):
+                    if not self._running:
+                        self._log_msg("⏹ 중지됨.", "err")
+                        break
+
                     self._log_msg(
-                        f"    ✔{pri_note} {best['airline']}  {best['dep']}→{best['arr']}  4인:{total4:,}원  1인:{per1:,}원",
-                        "ok"
+                        f"  {set_prefix}{dep_date.strftime('%Y-%m-%d')} ({dep_date.strftime('%a')}) 검색 중..."
                     )
-                else:
-                    rows.append({
-                        "dep_date": dep_date.strftime("%Y-%m-%d"),
-                        "arr_date": (dep_date + timedelta(days=base_offset)).strftime("%Y-%m-%d"),
-                        "airline":"", "dep":"","arr":"","rDep":"","rArr":"",
-                        "total4":0,"per1":0,"seller":"","found":False,
-                    })
-                    self._log_msg("    ✗ 조건에 맞는 항공편 없음")
 
-                self._update_progress(idx, total_days)
+                    best = None
+                    used_offset = base_offset
+                    used_priority = None
+
+                    if expand_priorities:
+                        for pri_idx, pri in enumerate(expand_priorities):
+                            n = pri["nights"]
+                            off = n
+                            arr_date_try = dep_date + timedelta(days=off)
+                            url = build_url(origin, dest,
+                                            dep_date.strftime("%Y%m%d"),
+                                            arr_date_try.strftime("%Y%m%d"))
+                            flights = fetch_flights(driver, url, self._log_msg)
+                            if not flights:
+                                continue
+                            trial_config = dict(config)
+                            trial_config["arr_band"]     = pri["arr_cond"]
+                            trial_config["ret_dep_band"] = pri["ret_dep_cond"]
+                            trial_config["ret_arr_band"] = {"type":"slots","slots":["새벽","오전","오후","야간"]}
+                            candidate = select_best(flights, trial_config)
+                            if candidate:
+                                best = candidate
+                                used_offset = off
+                                used_priority = pri_idx + 1
+                                break
+                        arr_date = dep_date + timedelta(days=used_offset)
+                    else:
+                        best = None
+                        best_arr_date = dep_date + timedelta(days=base_offset)
+                        best_total = None
+                        for off in offsets:
+                            arr_try = dep_date + timedelta(days=off)
+                            url = build_url(origin, dest,
+                                            dep_date.strftime("%Y%m%d"),
+                                            arr_try.strftime("%Y%m%d"))
+                            flights = fetch_flights(driver, url, self._log_msg)
+                            cand = select_best(flights, config) if flights else None
+                            if cand:
+                                cand_total = parse_price(cand.get("cardPrice", "0"))
+                                if best is None or (cand_total and cand_total < best_total):
+                                    best = cand
+                                    best_total = cand_total
+                                    best_arr_date = arr_try
+                        arr_date = best_arr_date
+
+                    if best:
+                        actual_price = best.get("cardPrice", "")
+                        best["price"] = actual_price
+                        total4 = parse_price(actual_price)
+                        per1   = calc_per_person(total4)
+                        pri_note = f" [{used_priority}순위]" if used_priority else ""
+                        rows.append({
+                            "dep_date": dep_date.strftime("%Y-%m-%d"),
+                            "arr_date": arr_date.strftime("%Y-%m-%d"),
+                            "airline":  best["airline"],
+                            "dep":  best["dep"],  "arr":  best["arr"],
+                            "rDep": best.get("rDep",""), "rArr": best.get("rArr",""),
+                            "total4": total4, "per1": per1,
+                            "seller": pri_note.strip(),
+                            "found": True,
+                        })
+                        self._log_msg(
+                            f"    ✔{pri_note} {set_prefix}{best['airline']}  {best['dep']}→{best['arr']}  4인:{total4:,}원  1인:{per1:,}원",
+                            "ok"
+                        )
+                    else:
+                        rows.append({
+                            "dep_date": dep_date.strftime("%Y-%m-%d"),
+                            "arr_date": (dep_date + timedelta(days=base_offset)).strftime("%Y-%m-%d"),
+                            "airline":"", "dep":"","arr":"","rDep":"","rArr":"",
+                            "total4":0,"per1":0,"seller":"","found":False,
+                        })
+                        self._log_msg(f"    ✗ {set_prefix}조건에 맞는 항공편 없음")
+
+                    work_done += 1
+                    self._update_progress(work_done, total_work)
+
+                rows_by_set.append({"label": label, "rows": rows})
+
+                if not self._running:
+                    break
 
             driver.quit()
 
-            if rows:
-                save_excel(rows, origin, dest, date_from.year, date_from.month, out_path)
-                found_cnt = sum(1 for r in rows if r["found"])
-                self._log_msg(
-                    f"\n✅ 완료! 총 {len(rows)}일 중 {found_cnt}일 확인 → {fname}",
-                    "ok"
-                )
+            total_rows = sum(len(entry["rows"]) for entry in rows_by_set)
+            if total_rows > 0:
+                if multi_mode:
+                    save_excel_multi(rows_by_set, origin, dest, out_path)
+                else:
+                    only = rows_by_set[0]
+                    save_excel(only["rows"], origin, dest, date_from.year, date_from.month, out_path)
+
+                summary_parts = []
+                for entry in rows_by_set:
+                    found_cnt = sum(1 for r in entry["rows"] if r["found"])
+                    summary_parts.append(f"{entry['label']}: {found_cnt}/{len(entry['rows'])}일")
+                summary = "  /  ".join(summary_parts)
+
+                self._log_msg(f"\n✅ 완료! {summary} → {fname}", "ok")
                 self.after(0, lambda: messagebox.showinfo(
                     "완료",
-                    f"추출 완료!\n{date_from} ~ {date_to}\n{found_cnt}일 확인\n저장: {out_path}"
+                    f"추출 완료!\n{date_from} ~ {date_to}\n{summary}\n저장: {out_path}"
                 ))
                 try:
                     from plyer import notification
                     notification.notify(
                         title="✈ G마켓 항공료 추출 완료",
-                        message=f"{origin} → {dest}  {found_cnt}일 확인 완료",
+                        message=f"{origin} → {dest}  완료",
                         app_name="G마켓 항공료 추출기",
                         timeout=8,
                     )
