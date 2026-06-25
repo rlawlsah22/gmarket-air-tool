@@ -304,7 +304,12 @@ def in_band(t: str, band) -> bool:
             h = parse_hour(t)
             m = int(re.search(r":(\d{2})", t).group(1)) if re.search(r":(\d{2})", t) else 0
             total_min = h * 60 + m
-            return band["from"] <= total_min <= band["to"]
+            lo, hi = band["from"], band["to"]
+            if lo <= hi:
+                return lo <= total_min <= hi
+            else:
+                # 자정을 넘는 범위 (예: 18:00 ~ 01:59)
+                return total_min >= lo or total_min <= hi
         elif band["type"] == "slots":
             return any(in_band(t, s) for s in band["slots"])
     if isinstance(band, list):
