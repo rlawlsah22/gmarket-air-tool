@@ -799,6 +799,7 @@ class GmarketAirApp(tk.Tk):
         self._log.tag_configure("info", foreground=C_LOG_INFO)
 
         self._log_msg("시스템 준비 완료. 조건을 설정하고 '추출 시작'을 눌러주세요.", "info")
+        self._log_msg("오류 등 문의 사항은 진모에게 문의 주세요.", "info")
         if not SCRAPER_OK:
             self._log_msg("⚠ scraper_core.py를 찾을 수 없습니다. 같은 폴더에 있는지 확인하세요.", "err")
 
@@ -1076,8 +1077,7 @@ class GmarketAirApp(tk.Tk):
                             url = build_url(origin, dest,
                                             dep_date.strftime("%Y%m%d"),
                                             arr_date_try.strftime("%Y%m%d"))
-                            specific = config.get("specific_airlines") if config.get("airline_mode") == "특정항공사" else None
-                            flights = fetch_flights(driver, url, self._log_msg, specific_airlines=specific)
+                            flights = fetch_flights(driver, url, self._log_msg)
                             if not flights:
                                 continue
                             trial_config = dict(config)
@@ -1100,8 +1100,7 @@ class GmarketAirApp(tk.Tk):
                             url = build_url(origin, dest,
                                             dep_date.strftime("%Y%m%d"),
                                             arr_try.strftime("%Y%m%d"))
-                            specific = config.get("specific_airlines") if config.get("airline_mode") == "특정항공사" else None
-                            flights = fetch_flights(driver, url, self._log_msg, specific_airlines=specific)
+                            flights = fetch_flights(driver, url, self._log_msg)
                             cand = select_best(flights, config) if flights else None
                             if cand:
                                 cand_total = parse_price(cand.get("cardPrice", "0"))
