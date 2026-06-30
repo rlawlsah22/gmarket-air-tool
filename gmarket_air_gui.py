@@ -593,7 +593,7 @@ class ConditionBlock:
 class GmarketAirApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("G마켓 항공료 자동 추출기  |  투어로 2팀")
+        self.title("G마켓 항공료 자동 추출기  |  투어로 김진모")
         self.geometry("1280x940")
         self.resizable(True, True)
         self.configure(bg=C_BG)
@@ -609,7 +609,7 @@ class GmarketAirApp(tk.Tk):
         banner.pack_propagate(False)
         tk.Label(banner, text="✈  G마켓 항공료 자동 추출기",
                  bg=C_ACCENT, fg="white", font=FONT_TITLE).pack(side="left", padx=18, pady=10)
-        tk.Label(banner, text="투어로 2팀",
+        tk.Label(banner, text="투어로 김진모",
                  bg=C_ACCENT, fg="#BDD7EE", font=FONT_SMALL).pack(side="right", padx=18)
 
         # 스크롤 가능 메인 영역 (세로 + 가로)
