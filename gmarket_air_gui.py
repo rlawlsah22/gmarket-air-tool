@@ -1,4 +1,28 @@
 """
+import sys, subprocess
+
+def _ensure_package(pkg, import_name=None):
+    import_name = import_name or pkg
+    try:
+        __import__(import_name)
+    except ImportError:
+        import tkinter as _tk, threading as _th
+        root = _tk.Tk()
+        root.title("설치 중...")
+        root.geometry("340x100")
+        root.resizable(False, False)
+        lbl = _tk.Label(root, text=f"'{pkg}' 패키지를 설치하는 중입니다.\n잠시만 기다려 주세요...",
+                        font=("맑은 고딕", 11), pady=20)
+        lbl.pack()
+        def _install():
+            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg,
+                                   "--quiet", "--disable-pip-version-check"])
+            root.after(0, root.destroy)
+        _th.Thread(target=_install, daemon=True).start()
+        root.mainloop()
+
+_ensure_package("customtkinter")
+
 gmarket_air_gui.py  —  리디자인: 좌측 사이드바 + 우측 메인 (customtkinter)
 """
 import customtkinter as ctk
