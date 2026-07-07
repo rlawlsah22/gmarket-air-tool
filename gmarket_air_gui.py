@@ -17,8 +17,11 @@ def _ensure_customtkinter():
             0x40  # MB_OK | MB_ICONINFORMATION
         )
         try:
+            # exe 환경에서는 sys.executable이 exe 자체라 python.exe를 별도로 찾음
+            import shutil
+            python_exec = shutil.which("python") or shutil.which("python3") or sys.executable
             subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "customtkinter",
+                [python_exec, "-m", "pip", "install", "customtkinter",
                  "--quiet", "--disable-pip-version-check"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             ctypes.windll.user32.MessageBoxW(
