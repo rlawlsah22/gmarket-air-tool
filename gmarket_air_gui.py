@@ -44,7 +44,15 @@ def _ensure_customtkinter():
             zip_data = r.read()
 
         with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
-            zf.extractall(base)
+            for member in zf.infolist():
+                # 경로 안전하게 처리
+                target = os.path.join(base, member.filename)
+                if member.filename.endswith('/'):
+                    os.makedirs(target, exist_ok=True)
+                else:
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    with zf.open(member) as src, open(target, 'wb') as dst:
+                        dst.write(src.read())
 
         if base not in sys.path:
             sys.path.insert(0, base)
