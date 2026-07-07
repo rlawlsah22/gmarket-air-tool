@@ -8,24 +8,33 @@ def _ensure_customtkinter():
     try:
         import customtkinter
     except ImportError:
-        import tkinter as _tk, threading as _th
-        root = _tk.Tk()
-        root.title("초기 설정")
-        root.geometry("380x110")
-        root.resizable(False, False)
-        root.eval('tk::PlaceWindow . center')
-        import tkinter as _tk2
-        _tk2.Label(root,
-                   text="처음 실행 시 필요한 패키지를 설치하는 중입니다.\n잠시만 기다려 주세요...",
-                   font=("맑은 고딕", 11), pady=24).pack()
-        def _install():
+        import ctypes
+        # 설치 중 안내 (tkinter 대신 ctypes 메시지박스 사용)
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            "필요한 패키지(customtkinter)를 설치합니다.\n확인을 누르면 설치가 시작됩니다.\n설치 완료 후 프로그램을 다시 실행해 주세요.",
+            "초기 설정",
+            0x40  # MB_OK | MB_ICONINFORMATION
+        )
+        try:
             subprocess.check_call(
                 [sys.executable, "-m", "pip", "install", "customtkinter",
                  "--quiet", "--disable-pip-version-check"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            root.after(0, root.destroy)
-        _th.Thread(target=_install, daemon=True).start()
-        root.mainloop()
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                "설치가 완료되었습니다.\n프로그램을 다시 실행해 주세요.",
+                "설치 완료",
+                0x40
+            )
+        except Exception as e:
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                f"설치 중 오류가 발생했습니다.\n진모에게 문의해주세요.\n\n오류: {e}",
+                "오류",
+                0x10
+            )
+        sys.exit(0)
 
 _ensure_customtkinter()
 
