@@ -13,23 +13,22 @@ def _ensure_customtkinter():
 
     import ctypes, urllib.request, zipfile, io
 
-    # BASE_DIR: exe 옆 폴더 (또는 스크립트 폴더)
-    if getattr(sys, 'frozen', False):
-        base = os.path.dirname(sys.executable)
-    else:
-        base = os.path.dirname(os.path.abspath(__file__)) if "__file__" in dir() else os.getcwd()
+    # BASE_DIR: exe가 있는 폴더를 확실하게 잡기
+    # launcher가 동적 로드할 때 sys.executable = exe 경로
+    base = os.path.dirname(os.path.abspath(sys.executable))
 
     ctk_dir = os.path.join(base, "customtkinter")
 
     # 이미 다운받은 폴더가 있으면 sys.path에 추가 후 재시도
     if os.path.exists(ctk_dir):
-        if base not in sys.path:
-            sys.path.insert(0, base)
+        for p in [base, ctk_dir]:
+            if p not in sys.path:
+                sys.path.insert(0, p)
         try:
             import customtkinter
-            return
+            return  # 성공하면 통과
         except ImportError:
-            pass
+            pass  # 폴더는 있지만 불완전 → 재다운로드
 
     # GitHub에서 customtkinter.zip 다운로드
     ctypes.windll.user32.MessageBoxW(
@@ -54,8 +53,9 @@ def _ensure_customtkinter():
                     with zf.open(member) as src, open(target, 'wb') as dst:
                         dst.write(src.read())
 
-        if base not in sys.path:
-            sys.path.insert(0, base)
+        for p in [base, ctk_dir]:
+            if p not in sys.path:
+                sys.path.insert(0, p)
 
         ctypes.windll.user32.MessageBoxW(
             0,
