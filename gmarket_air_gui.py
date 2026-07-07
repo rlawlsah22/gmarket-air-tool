@@ -27,7 +27,14 @@ def _ensure_customtkinter():
         try:
             import customtkinter
             return  # 성공하면 통과
-        except ImportError:
+        except ImportError as e:
+            import ctypes as _c
+            _c.windll.user32.MessageBoxW(
+                0,
+                f"폴더는 있지만 import 실패\nbase={base}\nctk_dir={ctk_dir}\nsys.path[0:3]={sys.path[0:3]}\n오류={e}",
+                "디버그",
+                0x40
+            )
             pass  # 폴더는 있지만 불완전 → 재다운로드
 
     # GitHub에서 customtkinter.zip 다운로드
