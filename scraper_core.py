@@ -62,7 +62,7 @@ for country, cities in AIRPORTS.items():
 
 LCC_TIER1 = ["진에어", "이스타항공", "티웨이항공"]
 LCC_TIER2 = ["제주항공", "에어부산"]
-LCC_OTHER = ["에어로케이", "에어프레미아", "에어서울", "파라타항공"]
+LCC_OTHER = ["에어로케이", "에어서울", "파라타항공"]
 LCC_ALL   = LCC_TIER1 + LCC_TIER2 + LCC_OTHER
 FSC_ALL   = ["아시아나항공", "대한항공"]
 FOREIGN_ALL = [
