@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import threading
 import os
+import re
 import datetime
 import sys
 import shutil
@@ -833,6 +834,13 @@ class GmarketAirApp(tk.Tk):
                   bg=C_BTN, fg=C_BTN_FG, font=FONT_SMALL,
                   relief="flat", cursor="hand2", padx=8).grid(row=0, column=1, **pad)
 
+        tk.Label(row5, text="파일명 (비워두면 자동 생성):", bg=C_PANEL, fg=C_ACCENT2,
+                 font=FONT_SMALL).grid(row=1, column=0, sticky="w", padx=6, pady=(4, 0))
+        self.custom_filename_var = tk.StringVar(value="")
+        tk.Entry(row5, textvariable=self.custom_filename_var, width=46, font=FONT_BODY,
+                 bg="#F8F9FB", relief="solid", bd=1
+                 ).grid(row=2, column=0, columnspan=2, sticky="w", **pad)
+
         # ── 기타 옵션 ──
         self._add_section_header("⚙  5. 기타 옵션")
         row6 = self._panel()
@@ -1174,6 +1182,7 @@ class GmarketAirApp(tk.Tk):
             "multi_mode": self._set_mode,
             "show_browser": self.show_browser_var.get(),
             "out_dir": self.out_dir_var.get(),
+            "custom_filename": self.custom_filename_var.get().strip(),
         }
 
     # ──────── 실행 ────────
@@ -1205,6 +1214,7 @@ class GmarketAirApp(tk.Tk):
         out_dir   = p["out_dir"]
         sets      = p["sets"]
         multi_mode = p["multi_mode"]
+        custom_filename = p.get("custom_filename", "")
 
         from datetime import timedelta
         from scraper_core import (init_driver, build_url, fetch_flights,
@@ -1220,7 +1230,13 @@ class GmarketAirApp(tk.Tk):
         total_days = len(date_list)
         total_work = total_days * len(sets)
 
-        fname = f"gmarket_{origin}_{dest}_{date_from.strftime('%Y%m%d')}_{date_to.strftime('%Y%m%d')}.xlsx"
+        if custom_filename:
+            safe_name = re.sub(r'[\\/:*?"<>|]', "_", custom_filename)
+            if not safe_name.lower().endswith(".xlsx"):
+                safe_name += ".xlsx"
+            fname = safe_name
+        else:
+            fname = f"gmarket_{origin}_{dest}_{date_from.strftime('%Y%m%d')}_{date_to.strftime('%Y%m%d')}.xlsx"
         out_path = os.path.join(out_dir, fname)
 
         self._log_msg(
