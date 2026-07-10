@@ -16,7 +16,7 @@ import ctypes
 # ─────────────────────────────────────────────
 #  자동 업데이트 (GitHub)
 # ─────────────────────────────────────────────
-CURRENT_VERSION = "1.0"
+CURRENT_VERSION = "1.5"
 GITHUB_USER     = "rlawlsah22"
 GITHUB_REPO     = "gmarket-air-tool"
 RAW_BASE        = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
@@ -55,7 +55,44 @@ def check_and_update():
     except Exception:
         pass
 
-# check_and_update()  # 테스트 빌드: GitHub 자동 업데이트로 파일이 덮어써지는 것을 막기 위해 주석 처리함
+check_and_update()
+
+# ─────────────────────────────────────────────
+#  프리셋 저장 (로컬 JSON, 노선/항공사모드/시간대)
+# ─────────────────────────────────────────────
+import json
+
+def _preset_file_path():
+    if getattr(sys, "frozen", False):
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_dir, "presets.json")
+
+def load_presets():
+    path = _preset_file_path()
+    if not os.path.exists(path):
+        return {}
+    _hide_file_windows(path)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_presets(data):
+    path = _preset_file_path()
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    _hide_file_windows(path)
+
+def _hide_file_windows(path):
+    try:
+        if os.name == "nt":
+            FILE_ATTRIBUTE_HIDDEN = 0x02
+            ctypes.windll.kernel32.SetFileAttributesW(str(path), FILE_ATTRIBUTE_HIDDEN)
+    except Exception:
+        pass
 
 # scraper_core가 같은 폴더에 있어야 함
 try:
@@ -352,6 +389,36 @@ class ConditionBlock:
         self._add_row_btn.pack_forget()
 
         self.after_id_holder = None  # set by caller for hint updates
+
+    # ──────── 프리셋 export / import (항공사 모드 + 특정항공사 + 시간대) ────────
+    def export_preset_fields(self):
+        return {
+            "airline_mode": self.airline_mode_var.get(),
+            "specific_airlines": [al for al, v in self._airline_vars.items() if v.get()],
+            "bands": {
+                key: [sv.get() for sv in slot_vars]
+                for key, slot_vars in self._band_vars.items()
+            },
+        }
+
+    def import_preset_fields(self, data):
+        mode = data.get("airline_mode")
+        if mode in AIRLINE_MODES:
+            self.airline_mode_var.set(mode)
+            self._on_mode_change()
+
+        specific = set(data.get("specific_airlines", []))
+        for al, v in self._airline_vars.items():
+            v.set(al in specific)
+
+        bands = data.get("bands", {})
+        for key, slot_vals in bands.items():
+            if key not in self._band_vars:
+                continue
+            for sv, val in zip(self._band_vars[key], slot_vals):
+                sv.set(val)
+            if key in self._band_all_vars:
+                self._band_all_vars[key].set(all(slot_vals))
 
     # ──────── 항공사 모드 토글 ────────
     def _on_mode_change(self, _=None):
@@ -668,6 +735,33 @@ class GmarketAirApp(tk.Tk):
         self._dest_city_cb.grid(row=0, column=6, **pad)
         dest_country_cb.bind("<<ComboboxSelected>>", lambda e: self._on_country_change("dest"))
 
+        # ── 프리셋 (노선 + 항공사모드 + 시간대 저장/불러오기) ──
+        preset_row = tk.Frame(row1, bg=C_PANEL)
+        preset_row.grid(row=1, column=0, columnspan=7, sticky="w", padx=12, pady=(0, 8))
+        tk.Label(preset_row, text="💾 프리셋", bg=C_PANEL, fg=C_ACCENT2,
+                 font=FONT_SMALL).pack(side="left", padx=(0, 6))
+        self._presets = load_presets()
+        self.preset_var = tk.StringVar(value="")
+        self._preset_cb = ttk.Combobox(preset_row, textvariable=self.preset_var,
+                                       values=list(self._presets.keys()),
+                                       state="normal", width=20)
+        self._preset_cb.pack(side="left", padx=(0, 6))
+        self._preset_cb.configure(
+            postcommand=lambda: self._preset_cb.configure(values=list(self._presets.keys()))
+        )
+        tk.Button(preset_row, text="불러오기", command=self._load_preset,
+                  bg=C_BTN, fg=C_BTN_FG, font=FONT_SMALL,
+                  relief="flat", cursor="hand2", padx=8).pack(side="left", padx=2)
+        tk.Button(preset_row, text="저장", command=self._save_preset,
+                  bg="#E8F0FE", fg=C_ACCENT, font=FONT_SMALL,
+                  relief="flat", cursor="hand2", padx=8).pack(side="left", padx=2)
+        tk.Button(preset_row, text="삭제", command=self._delete_preset,
+                  bg="#FFEEEE", fg=C_WARN, font=FONT_SMALL,
+                  relief="flat", cursor="hand2", padx=8).pack(side="left", padx=2)
+        tk.Button(preset_row, text="＋ 새 프리셋", command=lambda: self.preset_var.set(""),
+                  bg="#EEEEEE", fg="#555555", font=FONT_SMALL,
+                  relief="flat", cursor="hand2", padx=8).pack(side="left", padx=2)
+
         # ── 섹션 2: 출발 월 ──
         self._add_section_header("📅  2. 출발 월")
         date_panel = self._panel()
@@ -889,6 +983,105 @@ class GmarketAirApp(tk.Tk):
             cities = list(AIRPORTS[country].keys())
             self._dest_city_cb["values"] = cities
             self.dest_city_var.set(cities[0])
+
+    # ──────── 프리셋 저장/불러오기/삭제 ────────
+    def _current_route_and_condition(self):
+        data = {
+            "origin_country": self.origin_country_var.get(),
+            "origin_city": self.origin_city_var.get(),
+            "dest_country": self.dest_country_var.get(),
+            "dest_city": self.dest_city_var.get(),
+            "set_mode": self._set_mode,
+        }
+        if self._set_mode:
+            data["sets"] = [
+                {"nights": block.return_offset_var.get(), **block.export_preset_fields()}
+                for block in self._set_blocks
+            ]
+        else:
+            data.update(self._single_block.export_preset_fields())
+        return data
+
+    def _save_preset(self):
+        name = self.preset_var.get().strip()
+        if not name:
+            from tkinter import simpledialog
+            name = simpledialog.askstring("프리셋 저장", "프리셋 이름을 입력하세요:", parent=self)
+            if not name:
+                return
+            name = name.strip()
+        if name in self._presets:
+            if not messagebox.askyesno(
+                "프리셋 덮어쓰기",
+                f"'{name}' 프리셋이 이미 있습니다.\n현재 설정으로 덮어쓸까요?"
+            ):
+                return
+        self._presets[name] = self._current_route_and_condition()
+        save_presets(self._presets)
+        self._preset_cb["values"] = list(self._presets.keys())
+        self.preset_var.set(name)
+        messagebox.showinfo("프리셋 저장", f"'{name}' 프리셋이 저장되었습니다.")
+
+    def _load_preset(self):
+        name = self.preset_var.get()
+        if not name or name not in self._presets:
+            messagebox.showwarning("프리셋 불러오기", "불러올 프리셋을 선택하세요.")
+            return
+        data = self._presets[name]
+
+        oc = data.get("origin_country")
+        if oc in AIRPORTS:
+            self.origin_country_var.set(oc)
+            self._origin_city_cb["values"] = list(AIRPORTS[oc].keys())
+            oct_ = data.get("origin_city")
+            if oct_ in AIRPORTS[oc]:
+                self.origin_city_var.set(oct_)
+
+        dc = data.get("dest_country")
+        if dc in AIRPORTS:
+            self.dest_country_var.set(dc)
+            self._dest_city_cb["values"] = list(AIRPORTS[dc].keys())
+            dct_ = data.get("dest_city")
+            if dct_ in AIRPORTS[dc]:
+                self.dest_city_var.set(dct_)
+
+        preset_is_set_mode = data.get("set_mode", False)
+
+        if preset_is_set_mode:
+            if not self._set_mode:
+                self._toggle_set_mode()
+            sets_data = data.get("sets", [])
+            # 기존 세트 블록 전부 제거 후 프리셋 개수만큼 새로 생성
+            for block in list(self._set_blocks):
+                block.outer.destroy()
+            self._set_blocks = []
+            for set_data in sets_data:
+                self._add_condition_set()
+                new_block = self._set_blocks[-1]
+                nights = set_data.get("nights")
+                if nights:
+                    new_block.return_offset_var.set(nights)
+                new_block.import_preset_fields(set_data)
+            if not sets_data:
+                self._add_condition_set()
+        else:
+            if self._set_mode:
+                self._toggle_set_mode()
+            self._single_block.import_preset_fields(data)
+
+        messagebox.showinfo("프리셋 불러오기", f"'{name}' 프리셋을 불러왔습니다. (날짜는 직접 입력해주세요)")
+
+    def _delete_preset(self):
+        name = self.preset_var.get()
+        if not name or name not in self._presets:
+            messagebox.showwarning("프리셋 삭제", "삭제할 프리셋을 선택하세요.")
+            return
+        if not messagebox.askyesno("프리셋 삭제", f"'{name}' 프리셋을 삭제할까요?"):
+            return
+        del self._presets[name]
+        save_presets(self._presets)
+        self._preset_cb["values"] = list(self._presets.keys())
+        self.preset_var.set("")
 
     def _choose_dir(self):
         d = filedialog.askdirectory(initialdir=self.out_dir_var.get())
