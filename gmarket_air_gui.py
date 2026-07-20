@@ -17,7 +17,7 @@ import ctypes
 # ─────────────────────────────────────────────
 #  자동 업데이트 (GitHub)
 # ─────────────────────────────────────────────
-CURRENT_VERSION = "1.5"
+CURRENT_VERSION = "1.7"
 GITHUB_USER     = "rlawlsah22"
 GITHUB_REPO     = "gmarket-air-tool"
 RAW_BASE        = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
@@ -400,6 +400,10 @@ class ConditionBlock:
                 key: [sv.get() for sv in slot_vars]
                 for key, slot_vars in self._band_vars.items()
             },
+            "band_custom": {
+                key: [self._band_custom_from[key].get(), self._band_custom_to[key].get()]
+                for key in self._band_custom_from
+            },
         }
 
     def import_preset_fields(self, data):
@@ -420,6 +424,12 @@ class ConditionBlock:
                 sv.set(val)
             if key in self._band_all_vars:
                 self._band_all_vars[key].set(all(slot_vals))
+
+        band_custom = data.get("band_custom", {})
+        for key, (from_val, to_val) in band_custom.items():
+            if key in self._band_custom_from:
+                self._band_custom_from[key].set(from_val)
+                self._band_custom_to[key].set(to_val)
 
     # ──────── 항공사 모드 토글 ────────
     def _on_mode_change(self, _=None):
