@@ -675,24 +675,11 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
 
     click_filters(driver, specific_airlines=specific_airlines, log_fn=log_fn)
 
-    # 필터 적용 후 실제로 카드 내용이 바뀌었는지(또는 결과 없음으로 바뀌었는지) 확인.
+    # 필터 적용 후 실제로 카드 내용이 바뀌었는지 확인.
     # 내용이 그대로면 아직 갱신 중일 수 있으니 최대 15초간 폴링.
     filter_confirmed = False
     t_start = time.time()
     while time.time() - t_start < 15:
-        try:
-            no_result = driver.execute_script(
-                "var el = document.querySelector('.box__empty, .txt__empty, .box__no-result');"
-                "return el ? true : false;"
-            )
-        except Exception:
-            no_result = False
-
-        if no_result:
-            if log_fn:
-                log_fn("      (필터 조건에 맞는 항공편 없음)")
-            return []
-
         try:
             current_snapshot = driver.execute_script(
                 "return document.querySelectorAll('.box__item-card').length + '|' + "
