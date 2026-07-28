@@ -547,21 +547,58 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
 
     time.sleep(3)
 
-    # 필터 클릭 전 카드 내용 스냅샷 (필터 적용 여부를 내용 변화로 검증하기 위함)
-    try:
-        before_snapshot = driver.execute_script(
-            "return document.querySelectorAll('.box__item-card').length + '|' + "
-            "(document.querySelector('.box__item-card .text__time') ? "
-            "document.querySelector('.box__item-card .text__time').innerText : '')"
-        )
-    except Exception:
-        before_snapshot = None
-
     click_filters(driver, specific_airlines=specific_airlines, log_fn=log_fn)
 
-    # 필터 적용 후: (1) "선택한 조건으로 검색된 항공편이 없습니다" 안내 문구가 뜨는지,
-    # (2) 카드 내용이 실제로 바뀌었는지를 최대 15초간 폴링하며 확인한다.
-    filter_confirmed = False
+    # 필터가 실제로 3개 다 선택된 상태인지 최종 확인 (직항/공동운항제외/무료수하물).
+    # 하나라도 선택 안 되어 있으면 재시도하고, 그래도 안 되면 데이터를 절대 반환하지 않는다.
+    def _filters_all_applied():
+        try:
+            direct_ok = driver.execute_script(
+                "var c = document.querySelector('#check_flight_01');"
+                "return c ? c.checked : false;"
+            )
+        except Exception:
+            direct_ok = False
+        try:
+            opr_ok = driver.execute_script(
+                "var b = document.querySelector(\"button[data-code='opr']\");"
+                "return b ? b.getAttribute('aria-selected') === 'true' : false;"
+            )
+        except Exception:
+            opr_ok = False
+        try:
+            bag_ok = driver.execute_script(
+                "var b = document.querySelector(\"button[data-code='bag']\");"
+                "return b ? b.getAttribute('aria-selected') === 'true' : false;"
+            )
+        except Exception:
+            bag_ok = False
+        return direct_ok, opr_ok, bag_ok
+
+    filters_ok = False
+    for retry in range(3):
+        time.sleep(2)
+        direct_ok, opr_ok, bag_ok = _filters_all_applied()
+        if direct_ok and opr_ok and bag_ok:
+            filters_ok = True
+            break
+        if retry < 2:
+            click_filters(driver, specific_airlines=specific_airlines, log_fn=log_fn)
+
+    if not filters_ok:
+        direct_ok, opr_ok, bag_ok = _filters_all_applied()
+        if log_fn:
+            missing = []
+            if not direct_ok:
+                missing.append("직항만")
+            if not opr_ok:
+                missing.append("공동운항제외")
+            if not bag_ok:
+                missing.append("무료수하물")
+            log_fn(f"      ⚠ 필터 미적용({', '.join(missing)}) - 이 결과는 신뢰할 수 없어 건너뜁니다")
+        return []
+
+    # 필터 적용 후 "선택한 조건으로 검색된 항공편이 없습니다" 안내 문구 확인 (최대 15초 폴링)
     t_start = time.time()
     while time.time() - t_start < 15:
         try:
@@ -577,21 +614,15 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
             return []
 
         try:
-            current_snapshot = driver.execute_script(
-                "return document.querySelectorAll('.box__item-card').length + '|' + "
-                "(document.querySelector('.box__item-card .text__time') ? "
-                "document.querySelector('.box__item-card .text__time').innerText : '')"
+            has_cards = driver.execute_script(
+                "return document.querySelectorAll('.box__item-card').length > 0;"
             )
         except Exception:
-            current_snapshot = None
+            has_cards = False
 
-        if current_snapshot is not None and current_snapshot != before_snapshot:
-            filter_confirmed = True
+        if has_cards:
             break
         time.sleep(1)
-
-    if not filter_confirmed and log_fn:
-        log_fn("      ⚠ 필터 적용 후 결과 변화를 확인하지 못함 (이전 결과가 남아있을 수 있음)")
 
     time.sleep(2)
 
