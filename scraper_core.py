@@ -246,7 +246,7 @@ AIRLINE_CODE_MAP = {
     "산동항공":    "SC",
 }
 
-def click_filters(driver, specific_airlines=None):
+def click_filters(driver, specific_airlines=None, log_fn=None):
     # 직항 체크박스 클릭 (check_flight_01)
     try:
         chk = driver.find_element(By.CSS_SELECTOR, "input#check_flight_01")
@@ -257,14 +257,28 @@ def click_filters(driver, specific_airlines=None):
         pass
 
     # opr=공동운항제외, bag=무료수하물
+    # 클릭 후 aria-selected가 실제로 true로 바뀌었는지 검증하고, 실패하면 최대 3회 재시도.
+    filter_labels = {"opr": "공동운항제외", "bag": "무료수하물"}
     for code in ["opr", "bag"]:
-        try:
-            btn = driver.find_element(By.CSS_SELECTOR, f"button[data-code='{code}']")
-            if btn.get_attribute("aria-selected") == "false":
+        applied = False
+        for attempt in range(3):
+            try:
+                btn = driver.find_element(By.CSS_SELECTOR, f"button[data-code='{code}']")
+                if btn.get_attribute("aria-selected") == "true":
+                    applied = True
+                    break
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+                time.sleep(0.3)
                 driver.execute_script("arguments[0].click();", btn)
                 time.sleep(1.5)
-        except Exception:
-            pass
+                btn2 = driver.find_element(By.CSS_SELECTOR, f"button[data-code='{code}']")
+                if btn2.get_attribute("aria-selected") == "true":
+                    applied = True
+                    break
+            except Exception:
+                time.sleep(0.5)
+        if not applied and log_fn:
+            log_fn(f"      ⚠ '{filter_labels.get(code, code)}' 필터 적용 실패 (버튼을 못 찾았거나 클릭이 반영되지 않음)")
 
     if specific_airlines:
         try:
@@ -533,31 +547,53 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
 
     time.sleep(3)
 
-    click_filters(driver, specific_airlines=specific_airlines)
-
-    # 필터 클릭 후 카드가 사라졌다가 다시 로드될 때까지 대기
+    # 필터 클릭 전 카드 내용 스냅샷 (필터 적용 여부를 내용 변화로 검증하기 위함)
     try:
-        # 카드가 일단 사라지길 기다림 (필터 적용 중)
-        time.sleep(2)
-        WebDriverWait(driver, 8).until_not(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".box__item-card"))
+        before_snapshot = driver.execute_script(
+            "return document.querySelectorAll('.box__item-card').length + '|' + "
+            "(document.querySelector('.box__item-card .text__time') ? "
+            "document.querySelector('.box__item-card .text__time').innerText : '')"
         )
     except Exception:
-        pass  # 안 사라져도 계속 진행
+        before_snapshot = None
 
-    try:
-        # 카드가 다시 나타날 때까지 대기
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".box__item-card"))
-        )
-        WebDriverWait(driver, 20).until(
-            lambda d: d.execute_script(
-                "return document.querySelectorAll('.box__item-card .text__time').length > 0"
+    click_filters(driver, specific_airlines=specific_airlines, log_fn=log_fn)
+
+    # 필터 적용 후: (1) "선택한 조건으로 검색된 항공편이 없습니다" 안내 문구가 뜨는지,
+    # (2) 카드 내용이 실제로 바뀌었는지를 최대 15초간 폴링하며 확인한다.
+    filter_confirmed = False
+    t_start = time.time()
+    while time.time() - t_start < 15:
+        try:
+            no_result = driver.execute_script(
+                "return document.body.innerText.includes('선택한 조건으로 검색된 항공편이 없습니다');"
             )
-        )
-        time.sleep(4)
-    except Exception:
-        pass
+        except Exception:
+            no_result = False
+
+        if no_result:
+            if log_fn:
+                log_fn("      (필터 조건에 맞는 항공편 없음)")
+            return []
+
+        try:
+            current_snapshot = driver.execute_script(
+                "return document.querySelectorAll('.box__item-card').length + '|' + "
+                "(document.querySelector('.box__item-card .text__time') ? "
+                "document.querySelector('.box__item-card .text__time').innerText : '')"
+            )
+        except Exception:
+            current_snapshot = None
+
+        if current_snapshot is not None and current_snapshot != before_snapshot:
+            filter_confirmed = True
+            break
+        time.sleep(1)
+
+    if not filter_confirmed and log_fn:
+        log_fn("      ⚠ 필터 적용 후 결과 변화를 확인하지 못함 (이전 결과가 남아있을 수 있음)")
+
+    time.sleep(2)
 
 
 
