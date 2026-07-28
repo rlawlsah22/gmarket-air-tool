@@ -818,7 +818,7 @@ def save_excel(rows: list, origin: str, dest: str,
     ws.title = f"{origin}_{dest}_{year}{month:02d}"
     ws.row_dimensions[1].height = 22
 
-    for col, (h, w) in enumerate(zip(HEADERS, COL_WIDTHS), 1):
+    for col, (h, w) in enumerate(zip(build_headers(adults), COL_WIDTHS), 1):
         cell = ws.cell(row=1, column=col, value=h)
         cell.fill   = FILL_HEADER
         cell.font   = FONT_HEADER
