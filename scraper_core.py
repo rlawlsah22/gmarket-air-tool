@@ -663,31 +663,54 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
 
     time.sleep(3)
 
+    # 필터 클릭 전 카드 내용을 스냅샷으로 저장 (필터 적용 여부를 내용 변화로 검증하기 위함)
+    try:
+        before_snapshot = driver.execute_script(
+            "return document.querySelectorAll('.box__item-card').length + '|' + "
+            "(document.querySelector('.box__item-card .text__time') ? "
+            "document.querySelector('.box__item-card .text__time').innerText : '')"
+        )
+    except Exception:
+        before_snapshot = None
+
     click_filters(driver, specific_airlines=specific_airlines, log_fn=log_fn)
 
-    # 필터 클릭 후 카드가 사라졌다가 다시 로드될 때까지 대기
-    try:
-        # 카드가 일단 사라지길 기다림 (필터 적용 중)
-        time.sleep(2)
-        WebDriverWait(driver, 8).until_not(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".box__item-card"))
-        )
-    except Exception:
-        pass  # 안 사라져도 계속 진행
-
-    try:
-        # 카드가 다시 나타날 때까지 대기
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".box__item-card"))
-        )
-        WebDriverWait(driver, 20).until(
-            lambda d: d.execute_script(
-                "return document.querySelectorAll('.box__item-card .text__time').length > 0"
+    # 필터 적용 후 실제로 카드 내용이 바뀌었는지(또는 결과 없음으로 바뀌었는지) 확인.
+    # 내용이 그대로면 아직 갱신 중일 수 있으니 최대 15초간 폴링.
+    filter_confirmed = False
+    t_start = time.time()
+    while time.time() - t_start < 15:
+        try:
+            no_result = driver.execute_script(
+                "var el = document.querySelector('.box__empty, .txt__empty, .box__no-result');"
+                "return el ? true : false;"
             )
-        )
-        time.sleep(4)
-    except Exception:
-        pass
+        except Exception:
+            no_result = False
+
+        if no_result:
+            if log_fn:
+                log_fn("      (필터 조건에 맞는 항공편 없음)")
+            return []
+
+        try:
+            current_snapshot = driver.execute_script(
+                "return document.querySelectorAll('.box__item-card').length + '|' + "
+                "(document.querySelector('.box__item-card .text__time') ? "
+                "document.querySelector('.box__item-card .text__time').innerText : '')"
+            )
+        except Exception:
+            current_snapshot = None
+
+        if current_snapshot is not None and current_snapshot != before_snapshot:
+            filter_confirmed = True
+            break
+        time.sleep(1)
+
+    if not filter_confirmed and log_fn:
+        log_fn("      ⚠ 필터 적용 후 결과 변화를 확인하지 못함 (이전 결과가 남아있을 수 있음)")
+
+    time.sleep(2)
 
 
 
