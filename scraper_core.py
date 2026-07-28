@@ -246,7 +246,7 @@ AIRLINE_CODE_MAP = {
     "산동항공":    "SC",
 }
 
-def click_filters(driver, specific_airlines=None):
+def click_filters(driver, specific_airlines=None, log_fn=None):
     # 직항 체크박스 클릭 (check_flight_01)
     try:
         chk = driver.find_element(By.CSS_SELECTOR, "input#check_flight_01")
@@ -257,14 +257,29 @@ def click_filters(driver, specific_airlines=None):
         pass
 
     # opr=공동운항제외, bag=무료수하물
+    # 클릭 후 aria-selected가 실제로 true로 바뀌었는지 검증하고, 실패하면 최대 2회 재시도.
+    # 그래도 실패하면 조용히 넘어가지 않고 log_fn으로 알림.
+    filter_labels = {"opr": "공동운항제외", "bag": "무료수하물"}
     for code in ["opr", "bag"]:
-        try:
-            btn = driver.find_element(By.CSS_SELECTOR, f"button[data-code='{code}']")
-            if btn.get_attribute("aria-selected") == "false":
+        applied = False
+        for attempt in range(3):
+            try:
+                btn = driver.find_element(By.CSS_SELECTOR, f"button[data-code='{code}']")
+                if btn.get_attribute("aria-selected") == "true":
+                    applied = True
+                    break
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+                time.sleep(0.3)
                 driver.execute_script("arguments[0].click();", btn)
                 time.sleep(1.5)
-        except Exception:
-            pass
+                btn2 = driver.find_element(By.CSS_SELECTOR, f"button[data-code='{code}']")
+                if btn2.get_attribute("aria-selected") == "true":
+                    applied = True
+                    break
+            except Exception:
+                time.sleep(0.5)
+        if not applied and log_fn:
+            log_fn(f"      ⚠ '{filter_labels.get(code, code)}' 필터 적용 실패 (버튼을 못 찾았거나 클릭이 반영되지 않음)")
 
     if specific_airlines:
         try:
@@ -648,7 +663,7 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
 
     time.sleep(3)
 
-    click_filters(driver, specific_airlines=specific_airlines)
+    click_filters(driver, specific_airlines=specific_airlines, log_fn=log_fn)
 
     # 필터 클릭 후 카드가 사라졌다가 다시 로드될 때까지 대기
     try:
