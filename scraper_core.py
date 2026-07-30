@@ -39,7 +39,7 @@ AIRPORTS = {
         "연태": "YNT", "위해": "WEH", "대련": "DLC",
         "심양": "SHE", "제남": "TNA", "염성": "YNZ",
         "정주": "CGO", "하이커우": "HAK", "싼야": "SYX",
-        "곤명": "KMG", "광저우": "CAN", "심펀": "SZX", "하문": "XMN",
+        "곤명": "KMG", "광저우": "CAN", "심천": "SZX", "하문": "XMN",
     },
     "태국": {
         "방콕": "BKK", "치앙마이": "CNX", "푸켓": "HKT",
@@ -347,6 +347,125 @@ def calc_per_person(total4: int) -> int:
     per = total4 / 4
     rounded = math.ceil(per / 10000) * 10000
     return rounded + 40000
+
+
+def apply_price_grouping(rows: list, max_range: int = 50000, max_groups: int = 8) -> None:
+    """
+    1인금액(per1) 기준으로 갈무리 처리. 월(dep_date의 년-월) 단위로 나눠서
+    각 월 안에서만 그룹을 만든다 (여러 달을 한 번에 추출해도 달을 넘나들며 묶이지 않음).
+    - 그룹 내 값들의 범위(최고-최저)는 max_range(기본 5만원) 이내.
+    - 그룹 개수는 월별로 최대 max_groups(기본 8)개.
+    - 대표값(갈무리 완료 금액)은 그룹 내 최고가.
+    - rows의 각 dict에 "grouped_price" 키를 추가함 (found=False인 행은 건드리지 않음).
+    """
+    # 월(YYYY-MM) 단위로 행을 분리
+    rows_by_month = {}
+    for row in rows:
+        if not (row.get("found") and row.get("per1")):
+            continue
+        dep_date = row.get("dep_date", "")
+        month_key = dep_date[:7] if len(dep_date) >= 7 else ""  # "2026-08"
+        rows_by_month.setdefault(month_key, []).append(row)
+
+    for month_key, month_rows in rows_by_month.items():
+        sorted_rows = sorted(month_rows, key=lambda r: r["per1"])
+        values = [r["per1"] for r in sorted_rows]
+
+        groups = _best_price_partition(values, max_range=max_range, max_groups=max_groups)
+
+        idx = 0
+        for group in groups:
+            rep = group[-1]
+            for _ in group:
+                sorted_rows[idx]["grouped_price"] = rep
+                idx += 1
+
+
+def _best_price_partition(values: list, max_range: int = 50000, max_groups: int = 8,
+                           time_budget: float = 1.5) -> list:
+    """
+    정렬된 values를 분할해 그룹 리스트를 반환.
+    branch-and-bound로 '인접 그룹 대표값 차이의 분산'을 최소화.
+    시간 예산(time_budget)을 넘으면 지금까지 찾은 최선의 결과를 반환.
+    """
+    import time as _time
+    n = len(values)
+    if n == 0:
+        return []
+    if n == 1:
+        return [values]
+
+    best = {"var": float("inf"), "groups": None}
+    t_start = _time.time()
+    timed_out = {"flag": False}
+
+    def possible_group_ends(start):
+        ends = []
+        for end in range(start + 1, n + 1):
+            if values[end - 1] - values[start] <= max_range:
+                ends.append(end)
+            else:
+                break
+        return ends
+
+    def partial_var(reps):
+        if len(reps) < 2:
+            return 0.0
+        diffs = [reps[i + 1] - reps[i] for i in range(len(reps) - 1)]
+        mean = sum(diffs) / len(diffs)
+        return sum((d - mean) ** 2 for d in diffs) / len(diffs)
+
+    def recurse(start, groups_so_far, reps_so_far):
+        if timed_out["flag"]:
+            return
+        if _time.time() - t_start > time_budget:
+            timed_out["flag"] = True
+            return
+        if len(groups_so_far) > max_groups:
+            return
+        if len(reps_so_far) >= 2:
+            pv = partial_var(reps_so_far)
+            if pv > best["var"] * 3:
+                return
+        if start == n:
+            var = partial_var(reps_so_far)
+            if var < best["var"]:
+                best["var"] = var
+                best["groups"] = list(groups_so_far)
+            return
+        for end in possible_group_ends(start):
+            group = values[start:end]
+            groups_so_far.append(group)
+            reps_so_far.append(group[-1])
+            recurse(end, groups_so_far, reps_so_far)
+            groups_so_far.pop()
+            reps_so_far.pop()
+
+    recurse(0, [], [])
+
+    if best["groups"] is None:
+        groups = []
+        cur = [values[0]]
+        for v in values[1:]:
+            if v - cur[0] <= max_range:
+                cur.append(v)
+            else:
+                groups.append(cur)
+                cur = [v]
+        groups.append(cur)
+        return groups
+
+    return best["groups"]
+
+
+def _grouping_remark(row: dict) -> str:
+    """비고: 1인금액과 갈무리 완료 항공료의 차액 (차이 없으면 0원)"""
+    per1 = row.get("per1", 0)
+    grouped = row.get("grouped_price", per1)
+    diff = grouped - per1
+    if diff <= 0:
+        return "0원"
+    return f"+{diff:,}"
 
 
 # ─────────────────────────────────────────────
@@ -739,12 +858,14 @@ BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 CENTER = Alignment(horizontal="center", vertical="center")
 
 HEADERS = ["출발일", "귀국일", "항공사", "출발시간", "도착시간",
-           "귀국출발", "귀국도착", "4인총금액(카드할인가)", "1인금액", "비고"]
-COL_WIDTHS = [13, 13, 12, 10, 10, 10, 10, 22, 18, 16]
+           "귀국출발", "귀국도착", "4인총금액(카드할인가)", "1인금액", "갈무리 완료 항공료", "비고"]
+COL_WIDTHS = [13, 13, 12, 10, 10, 10, 10, 22, 18, 20, 16]
 
 
 def save_excel(rows: list, origin: str, dest: str,
                year: int, month: int, out_path: str):
+    apply_price_grouping(rows)
+
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = f"{origin}_{dest}_{year}{month:02d}"
@@ -774,13 +895,13 @@ def save_excel(rows: list, origin: str, dest: str,
             values = [
                 row["dep_date"], row["arr_date"], airline,
                 row["dep"], row["arr"], row["rDep"], row["rArr"],
-                row["total4"], row["per1"], row["seller"],
+                row["total4"], row["per1"], row.get("grouped_price", row["per1"]), _grouping_remark(row),
             ]
             font = FONT_NORMAL
         else:
             fill = FILL_NONE
             values = [row["dep_date"], row["arr_date"],
-                      "X", "", "", "", "", "", "", ""]
+                      "X", "", "", "", "", "", "", "", ""]
             font = FONT_NONE
 
         for col, val in enumerate(values, 1):
@@ -793,6 +914,7 @@ def save_excel(rows: list, origin: str, dest: str,
         if row["found"]:
             ws.cell(row=r, column=8).number_format = '#,##0'
             ws.cell(row=r, column=9).number_format = '#,##0'
+            ws.cell(row=r, column=10).number_format = '#,##0'
 
     ws.freeze_panes = "A2"
     wb.save(out_path)
@@ -820,6 +942,7 @@ def save_excel_multi(rows_by_set: list, origin: str, dest: str, out_path: str):
     for entry in rows_by_set:
         label = entry["label"]
         rows  = entry["rows"]
+        apply_price_grouping(rows)
 
         sheet_name = _safe_sheet_name(label)
         base_name = sheet_name
@@ -856,13 +979,13 @@ def save_excel_multi(rows_by_set: list, origin: str, dest: str, out_path: str):
                 values = [
                     row["dep_date"], row["arr_date"], airline,
                     row["dep"], row["arr"], row["rDep"], row["rArr"],
-                    row["total4"], row["per1"], row["seller"],
+                    row["total4"], row["per1"], row.get("grouped_price", row["per1"]), _grouping_remark(row),
                 ]
                 font = FONT_NORMAL
             else:
                 fill = FILL_NONE
                 values = [row["dep_date"], row["arr_date"],
-                          "X", "", "", "", "", "", "", ""]
+                          "X", "", "", "", "", "", "", "", ""]
                 font = FONT_NONE
 
             for col, val in enumerate(values, 1):
@@ -875,6 +998,7 @@ def save_excel_multi(rows_by_set: list, origin: str, dest: str, out_path: str):
             if row["found"]:
                 ws.cell(row=r, column=8).number_format = '#,##0'
                 ws.cell(row=r, column=9).number_format = '#,##0'
+                ws.cell(row=r, column=10).number_format = '#,##0'
 
         ws.freeze_panes = "A2"
 
