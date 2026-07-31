@@ -17,7 +17,7 @@ import ctypes
 # ─────────────────────────────────────────────
 #  자동 업데이트 (GitHub)
 # ─────────────────────────────────────────────
-CURRENT_VERSION = "1.7"
+CURRENT_VERSION = "2.0"
 GITHUB_USER     = "rlawlsah22"
 GITHUB_REPO     = "gmarket-air-tool"
 RAW_BASE        = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
@@ -74,7 +74,6 @@ def load_presets():
     path = _preset_file_path()
     if not os.path.exists(path):
         return {}
-    _hide_file_windows(path)
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -83,6 +82,7 @@ def load_presets():
 
 def save_presets(data):
     path = _preset_file_path()
+    _unhide_file_windows(path)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     _hide_file_windows(path)
@@ -92,6 +92,14 @@ def _hide_file_windows(path):
         if os.name == "nt":
             FILE_ATTRIBUTE_HIDDEN = 0x02
             ctypes.windll.kernel32.SetFileAttributesW(str(path), FILE_ATTRIBUTE_HIDDEN)
+    except Exception:
+        pass
+
+def _unhide_file_windows(path):
+    try:
+        if os.name == "nt" and os.path.exists(path):
+            FILE_ATTRIBUTE_NORMAL = 0x80
+            ctypes.windll.kernel32.SetFileAttributesW(str(path), FILE_ATTRIBUTE_NORMAL)
     except Exception:
         pass
 
@@ -176,7 +184,7 @@ def roundup_label(widget, text, bg, font=FONT_BODY, fg="#333333"):
 class ConditionBlock:
     """
     하나의 검색 조건 세트를 표현하는 위젯.
-    - 여행 일수 + (+1일 검색)
+    - 여행 일수 + (-1일 검색)
     - 항공사 모드 + 특정항공사 선택
     - 시간대 조건 (4칸)
     - 대체 조건 자동 확장 (선택)
@@ -257,9 +265,9 @@ class ConditionBlock:
             cb.grid(row=1 + (i // PER_ROW), column=i % PER_ROW, sticky="w", padx=2, pady=1)
         self._specific_frame.grid_remove()
 
-        # ── +1일도 함께 검색 ──
+        # ── -1일도 함께 검색 ──
         self.extra_return_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(self.outer, text="+1일도 함께 검색 (귀국 현지출발이 하루 빠른 새벽도착편 비교용)",
+        tk.Checkbutton(self.outer, text="-1일도 함께 검색 (귀국 현지출발이 하루 빠른 것도 함께 비교)",
                        variable=self.extra_return_var, bg=self.bg, font=FONT_SMALL,
                        activebackground=self.bg, command=self._update_return_hint
                        ).grid(row=row_idx, column=0, columnspan=8, sticky="w", padx=18, pady=(4, 0))
@@ -514,8 +522,8 @@ class ConditionBlock:
             df = _dt.datetime.strptime(date_from_str.strip(), "%Y-%m-%d").date()
             off = int(self.return_offset_var.get()) - 1
             d1 = df + _dt.timedelta(days=off)
-            if self.extra_return_var.get():
-                d2 = df + _dt.timedelta(days=off + 1)
+            if self.extra_return_var.get() and off > 0:
+                d2 = df + _dt.timedelta(days=off - 1)
                 txt = f"  → {df.strftime('%m/%d')} 출발 시 귀국 현지출발일: {d1.strftime('%m/%d')}, {d2.strftime('%m/%d')} 둘 다 검색"
             else:
                 txt = f"  → {df.strftime('%m/%d')} 출발 시 귀국 현지출발일: {d1.strftime('%m/%d')} 검색"
@@ -746,9 +754,16 @@ class GmarketAirApp(tk.Tk):
         self._dest_city_cb.grid(row=0, column=6, **pad)
         dest_country_cb.bind("<<ComboboxSelected>>", lambda e: self._on_country_change("dest"))
 
+        # 인원수
+        tk.Label(row1, text="인원수", bg=C_PANEL, font=FONT_SUB).grid(row=0, column=7, sticky="w", **pad)
+        self.adults_var = tk.IntVar(value=4)
+        tk.Spinbox(row1, from_=1, to=9, textvariable=self.adults_var, width=4,
+                   font=FONT_BODY, justify="center").grid(row=0, column=8, **pad)
+        tk.Label(row1, text="명", bg=C_PANEL, font=FONT_SUB).grid(row=0, column=9, sticky="w")
+
         # ── 프리셋 (노선 + 항공사모드 + 시간대 저장/불러오기) ──
         preset_row = tk.Frame(row1, bg=C_PANEL)
-        preset_row.grid(row=1, column=0, columnspan=7, sticky="w", padx=12, pady=(0, 8))
+        preset_row.grid(row=1, column=0, columnspan=10, sticky="w", padx=12, pady=(0, 8))
         tk.Label(preset_row, text="💾 프리셋", bg=C_PANEL, fg=C_ACCENT2,
                  font=FONT_SMALL).pack(side="left", padx=(0, 6))
         self._presets = load_presets()
@@ -1009,6 +1024,7 @@ class GmarketAirApp(tk.Tk):
             "origin_city": self.origin_city_var.get(),
             "dest_country": self.dest_country_var.get(),
             "dest_city": self.dest_city_var.get(),
+            "adults": self.adults_var.get(),
             "set_mode": self._set_mode,
         }
         if self._set_mode:
@@ -1062,6 +1078,10 @@ class GmarketAirApp(tk.Tk):
             dct_ = data.get("dest_city")
             if dct_ in AIRPORTS[dc]:
                 self.dest_city_var.set(dct_)
+
+        adults = data.get("adults")
+        if isinstance(adults, int) and 1 <= adults <= 9:
+            self.adults_var.set(adults)
 
         preset_is_set_mode = data.get("set_mode", False)
 
@@ -1193,6 +1213,7 @@ class GmarketAirApp(tk.Tk):
             "show_browser": self.show_browser_var.get(),
             "out_dir": self.out_dir_var.get(),
             "custom_filename": self.custom_filename_var.get().strip(),
+            "adults": self.adults_var.get(),
         }
 
     # ──────── 실행 ────────
@@ -1225,6 +1246,7 @@ class GmarketAirApp(tk.Tk):
         sets      = p["sets"]
         multi_mode = p["multi_mode"]
         custom_filename = p.get("custom_filename", "")
+        adults    = p.get("adults", 4)
 
         from datetime import timedelta
         from scraper_core import (init_driver, build_url, fetch_flights,
@@ -1264,7 +1286,7 @@ class GmarketAirApp(tk.Tk):
                 expand_priorities  = s["expand_priorities"]
                 base_offset        = s["return_offset"]
                 extra_return       = s["extra_return"]
-                offsets            = [base_offset, base_offset + 1] if extra_return else [base_offset]
+                offsets            = [base_offset, base_offset - 1] if extra_return and base_offset > 0 else [base_offset]
                 label              = s["label"]
                 set_prefix         = f"[{label}] " if multi_mode else ""
 
@@ -1295,7 +1317,8 @@ class GmarketAirApp(tk.Tk):
                             arr_date_try = dep_date + timedelta(days=off)
                             url = build_url(origin, dest,
                                             dep_date.strftime("%Y%m%d"),
-                                            arr_date_try.strftime("%Y%m%d"))
+                                            arr_date_try.strftime("%Y%m%d"),
+                                            adults=adults)
                             flights = fetch_flights(driver, url, self._log_msg)
                             if not flights:
                                 continue
@@ -1318,7 +1341,8 @@ class GmarketAirApp(tk.Tk):
                             arr_try = dep_date + timedelta(days=off)
                             url = build_url(origin, dest,
                                             dep_date.strftime("%Y%m%d"),
-                                            arr_try.strftime("%Y%m%d"))
+                                            arr_try.strftime("%Y%m%d"),
+                                            adults=adults)
                             flights = fetch_flights(driver, url, self._log_msg)
                             cand = select_best(flights, config) if flights else None
                             if cand:
@@ -1333,7 +1357,7 @@ class GmarketAirApp(tk.Tk):
                         actual_price = best.get("cardPrice", "")
                         best["price"] = actual_price
                         total4 = parse_price(actual_price)
-                        per1   = calc_per_person(total4)
+                        per1   = calc_per_person(total4, adults=adults)
                         pri_note = f" [{used_priority}순위]" if used_priority else ""
                         rows.append({
                             "dep_date": dep_date.strftime("%Y-%m-%d"),
@@ -1346,7 +1370,7 @@ class GmarketAirApp(tk.Tk):
                             "found": True,
                         })
                         self._log_msg(
-                            f"    ✔{pri_note} {set_prefix}{best['airline']}  {best['dep']}→{best['arr']}  4인:{total4:,}원  1인:{per1:,}원",
+                            f"    ✔{pri_note} {set_prefix}{best['airline']}  {best['dep']}→{best['arr']}  {adults}인:{total4:,}원  1인:{per1:,}원",
                             "ok"
                         )
                     else:
@@ -1371,10 +1395,10 @@ class GmarketAirApp(tk.Tk):
             total_rows = sum(len(entry["rows"]) for entry in rows_by_set)
             if total_rows > 0:
                 if multi_mode:
-                    save_excel_multi(rows_by_set, origin, dest, out_path)
+                    save_excel_multi(rows_by_set, origin, dest, out_path, adults=adults)
                 else:
                     only = rows_by_set[0]
-                    save_excel(only["rows"], origin, dest, date_from.year, date_from.month, out_path)
+                    save_excel(only["rows"], origin, dest, date_from.year, date_from.month, out_path, adults=adults)
 
                 summary_parts = []
                 for entry in rows_by_set:
