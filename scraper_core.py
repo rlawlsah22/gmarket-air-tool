@@ -39,7 +39,7 @@ AIRPORTS = {
         "연태": "YNT", "위해": "WEH", "대련": "DLC",
         "심양": "SHE", "제남": "TNA", "염성": "YNZ",
         "정주": "CGO", "하이커우": "HAK", "싼야": "SYX",
-        "곤명": "KMG", "광저우": "CAN", "심천": "SZX", "하문": "XMN",
+        "곤명": "KMG", "광저우": "CAN", "심펀": "SZX", "하문": "XMN",
     },
     "태국": {
         "방콕": "BKK", "치앙마이": "CNX", "푸켓": "HKT",
@@ -86,7 +86,7 @@ TIME_BANDS = {
 JS_PARSE = """
 const TARGET_SELLERS = ['롯데관광', '롯데제이티비', '여행이지'];
 const results = [];
-const cards = document.querySelectorAll('.box__item-card');
+const cards = Array.from(document.querySelectorAll('.box__item-card')).filter(c => c.offsetParent !== null);
 cards.forEach((card, idx) => {
     const airlineEls = card.querySelectorAll('.text__airline');
     const airline = airlineEls.length > 0 ? airlineEls[0].innerText.trim() : '';
@@ -342,9 +342,9 @@ def parse_price(s: str) -> int:
     return int(re.sub(r"[^0-9]", "", s)) if s else 0
 
 
-def calc_per_person(total4: int) -> int:
+def calc_per_person(total_amount: int, adults: int = 4) -> int:
     import math
-    per = total4 / 4
+    per = total_amount / adults
     rounded = math.ceil(per / 10000) * 10000
     return rounded + 40000
 
@@ -352,19 +352,14 @@ def calc_per_person(total4: int) -> int:
 def apply_price_grouping(rows: list, max_range: int = 50000, max_groups: int = 8) -> None:
     """
     1인금액(per1) 기준으로 갈무리 처리. 월(dep_date의 년-월) 단위로 나눠서
-    각 월 안에서만 그룹을 만든다 (여러 달을 한 번에 추출해도 달을 넘나들며 묶이지 않음).
-    - 그룹 내 값들의 범위(최고-최저)는 max_range(기본 5만원) 이내.
-    - 그룹 개수는 월별로 최대 max_groups(기본 8)개.
-    - 대표값(갈무리 완료 금액)은 그룹 내 최고가.
-    - rows의 각 dict에 "grouped_price" 키를 추가함 (found=False인 행은 건드리지 않음).
+    각 월 안에서만 그룹을 만든다.
     """
-    # 월(YYYY-MM) 단위로 행을 분리
     rows_by_month = {}
     for row in rows:
         if not (row.get("found") and row.get("per1")):
             continue
         dep_date = row.get("dep_date", "")
-        month_key = dep_date[:7] if len(dep_date) >= 7 else ""  # "2026-08"
+        month_key = dep_date[:7] if len(dep_date) >= 7 else ""
         rows_by_month.setdefault(month_key, []).append(row)
 
     for month_key, month_rows in rows_by_month.items():
@@ -383,11 +378,6 @@ def apply_price_grouping(rows: list, max_range: int = 50000, max_groups: int = 8
 
 def _best_price_partition(values: list, max_range: int = 50000, max_groups: int = 8,
                            time_budget: float = 1.5) -> list:
-    """
-    정렬된 values를 분할해 그룹 리스트를 반환.
-    branch-and-bound로 '인접 그룹 대표값 차이의 분산'을 최소화.
-    시간 예산(time_budget)을 넘으면 지금까지 찾은 최선의 결과를 반환.
-    """
     import time as _time
     n = len(values)
     if n == 0:
@@ -459,7 +449,6 @@ def _best_price_partition(values: list, max_range: int = 50000, max_groups: int 
 
 
 def _grouping_remark(row: dict) -> str:
-    """비고: 1인금액과 갈무리 완료 항공료의 차액 (차이 없으면 0원)"""
     per1 = row.get("per1", 0)
     grouped = row.get("grouped_price", per1)
     diff = grouped - per1
@@ -734,7 +723,8 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
 
         try:
             has_cards = driver.execute_script(
-                "return document.querySelectorAll('.box__item-card').length > 0;"
+                "return Array.from(document.querySelectorAll('.box__item-card'))"
+                ".some(el => el.offsetParent !== null);"
             )
         except Exception:
             has_cards = False
@@ -857,13 +847,16 @@ THIN = Side(style="thin", color="CCCCCC")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 CENTER = Alignment(horizontal="center", vertical="center")
 
-HEADERS = ["출발일", "귀국일", "항공사", "출발시간", "도착시간",
-           "귀국출발", "귀국도착", "4인총금액(카드할인가)", "1인금액", "갈무리 완료 항공료", "비고"]
+def build_headers(adults: int = 4) -> list:
+    return ["출발일", "귀국일", "항공사", "출발시간", "도착시간",
+            "귀국출발", "귀국도착", f"{adults}인총금액(카드할인가)", "1인금액", "갈무리 완료 항공료", "비고"]
+
+
 COL_WIDTHS = [13, 13, 12, 10, 10, 10, 10, 22, 18, 20, 16]
 
 
 def save_excel(rows: list, origin: str, dest: str,
-               year: int, month: int, out_path: str):
+               year: int, month: int, out_path: str, adults: int = 4):
     apply_price_grouping(rows)
 
     wb = openpyxl.Workbook()
@@ -871,7 +864,7 @@ def save_excel(rows: list, origin: str, dest: str,
     ws.title = f"{origin}_{dest}_{year}{month:02d}"
     ws.row_dimensions[1].height = 22
 
-    for col, (h, w) in enumerate(zip(HEADERS, COL_WIDTHS), 1):
+    for col, (h, w) in enumerate(zip(build_headers(adults), COL_WIDTHS), 1):
         cell = ws.cell(row=1, column=col, value=h)
         cell.fill   = FILL_HEADER
         cell.font   = FONT_HEADER
@@ -930,7 +923,7 @@ def _safe_sheet_name(name: str) -> str:
     return name[:31] if len(name) > 31 else name
 
 
-def save_excel_multi(rows_by_set: list, origin: str, dest: str, out_path: str):
+def save_excel_multi(rows_by_set: list, origin: str, dest: str, out_path: str, adults: int = 4):
     """
     rows_by_set: [{"label": "세트1_3일_LCC만", "rows": [...]}, ...]
     세트별로 시트를 분리해서 같은 엑셀 파일에 저장
@@ -938,6 +931,7 @@ def save_excel_multi(rows_by_set: list, origin: str, dest: str, out_path: str):
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
+    headers = build_headers(adults)
     used_names = set()
     for entry in rows_by_set:
         label = entry["label"]
@@ -955,7 +949,7 @@ def save_excel_multi(rows_by_set: list, origin: str, dest: str, out_path: str):
         ws = wb.create_sheet(title=sheet_name)
         ws.row_dimensions[1].height = 22
 
-        for col, (h, w) in enumerate(zip(HEADERS, COL_WIDTHS), 1):
+        for col, (h, w) in enumerate(zip(headers, COL_WIDTHS), 1):
             cell = ws.cell(row=1, column=col, value=h)
             cell.fill      = FILL_HEADER
             cell.font      = FONT_HEADER
