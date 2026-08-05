@@ -17,7 +17,7 @@ import ctypes
 # ─────────────────────────────────────────────
 #  자동 업데이트 (GitHub)
 # ─────────────────────────────────────────────
-CURRENT_VERSION = "2.2"
+CURRENT_VERSION = "2.3"
 GITHUB_USER     = "rlawlsah22"
 GITHUB_REPO     = "gmarket-air-tool"
 RAW_BASE        = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
