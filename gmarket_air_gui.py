@@ -23,6 +23,22 @@ GITHUB_REPO     = "gmarket-air-tool"
 RAW_BASE        = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
 UPDATE_FILES    = ["gmarket_air_gui.py", "scraper_core.py", "airpremia_fare_checker.py"]
 
+def _hide_file_windows(path):
+    try:
+        if os.name == "nt":
+            FILE_ATTRIBUTE_HIDDEN = 0x02
+            ctypes.windll.kernel32.SetFileAttributesW(str(path), FILE_ATTRIBUTE_HIDDEN)
+    except Exception:
+        pass
+
+def _unhide_file_windows(path):
+    try:
+        if os.name == "nt" and os.path.exists(path):
+            FILE_ATTRIBUTE_NORMAL = 0x80
+            ctypes.windll.kernel32.SetFileAttributesW(str(path), FILE_ATTRIBUTE_NORMAL)
+    except Exception:
+        pass
+
 def check_and_update():
     try:
         url = f"{RAW_BASE}/version.txt"
@@ -88,22 +104,6 @@ def save_presets(data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     _hide_file_windows(path)
-
-def _hide_file_windows(path):
-    try:
-        if os.name == "nt":
-            FILE_ATTRIBUTE_HIDDEN = 0x02
-            ctypes.windll.kernel32.SetFileAttributesW(str(path), FILE_ATTRIBUTE_HIDDEN)
-    except Exception:
-        pass
-
-def _unhide_file_windows(path):
-    try:
-        if os.name == "nt" and os.path.exists(path):
-            FILE_ATTRIBUTE_NORMAL = 0x80
-            ctypes.windll.kernel32.SetFileAttributesW(str(path), FILE_ATTRIBUTE_NORMAL)
-    except Exception:
-        pass
 
 # scraper_core가 같은 폴더에 있어야 함
 try:
