@@ -17,7 +17,7 @@ import ctypes
 # ─────────────────────────────────────────────
 #  자동 업데이트 (GitHub)
 # ─────────────────────────────────────────────
-CURRENT_VERSION = "2.0"
+CURRENT_VERSION = "2.2"
 GITHUB_USER     = "rlawlsah22"
 GITHUB_REPO     = "gmarket-air-tool"
 RAW_BASE        = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
@@ -41,9 +41,11 @@ def check_and_update():
         for fname in UPDATE_FILES:
             file_url = f"{RAW_BASE}/{fname}"
             dst = os.path.join(base_dir, fname)
+            _unhide_file_windows(dst)
             with urllib.request.urlopen(file_url, timeout=10) as r:
                 with open(dst, "wb") as f:
                     f.write(r.read())
+            _hide_file_windows(dst)
 
         ctypes.windll.user32.MessageBoxW(
             0,
