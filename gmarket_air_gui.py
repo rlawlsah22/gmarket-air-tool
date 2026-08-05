@@ -21,7 +21,7 @@ CURRENT_VERSION = "2.0"
 GITHUB_USER     = "rlawlsah22"
 GITHUB_REPO     = "gmarket-air-tool"
 RAW_BASE        = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
-UPDATE_FILES    = ["gmarket_air_gui.py", "scraper_core.py"]
+UPDATE_FILES    = ["gmarket_air_gui.py", "scraper_core.py", "airpremia_fare_checker.py"]
 
 def check_and_update():
     try:
