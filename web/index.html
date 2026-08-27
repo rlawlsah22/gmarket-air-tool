@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>항공료 자동 추출기</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div id="banner">
+    <div id="banner-logo-zone"><span class="logo-icon">✈</span> 항공료 자동 추출기</div>
+    <div id="banner-topbar"></div>
+  </div>
+
+  <div id="layout">
+
+    <div id="sidebar">
+      <button class="nav-item active" data-page="gmarket">
+        <span class="nav-icon">🛫</span> G마켓 검색
+      </button>
+      <button class="nav-item" data-page="airpremia">
+        <span class="nav-icon">✈</span> 에어프레미아 검색
+      </button>
+    </div>
+
+    <div id="main">
+
+      <!-- ══════════════ G마켓 검색 페이지 ══════════════ -->
+      <div class="page" id="page-gmarket">
+
+        <div class="section-header">📍 1. 노선 설정</div>
+        <div class="card">
+          <div class="row-inline">
+            <span class="field-label">출발지</span>
+            <select id="gm-origin-country" class="sel-sm"></select>
+            <select id="gm-origin-city" class="sel-md"></select>
+            <span class="arrow">→</span>
+            <span class="field-label">목적지</span>
+            <select id="gm-dest-country" class="sel-sm"></select>
+            <select id="gm-dest-city" class="sel-md"></select>
+            <span class="field-label">인원수</span>
+            <input type="number" id="gm-adults" class="input-xs" min="1" max="9" value="4">
+            <span class="unit">명</span>
+          </div>
+          <div class="row-inline preset-row">
+            <span class="field-label small">💾 프리셋</span>
+            <input list="gm-preset-list" id="gm-preset-input" class="input-preset" placeholder="프리셋 선택 또는 새 이름 입력">
+            <datalist id="gm-preset-list"></datalist>
+            <button class="btn btn-primary" data-act="preset-load">불러오기</button>
+            <button class="btn btn-soft" data-act="preset-save">저장</button>
+            <button class="btn btn-danger-soft" data-act="preset-delete">삭제</button>
+            <button class="btn btn-neutral" data-act="preset-new">＋ 새 프리셋</button>
+          </div>
+        </div>
+
+        <div class="section-header">📅 2. 출발 월</div>
+        <div class="card">
+          <div class="row-inline">
+            <span class="field-label">출발일</span>
+            <input type="text" id="gm-date-from" class="input-date">
+            <span class="arrow">~</span>
+            <input type="text" id="gm-date-to" class="input-date">
+            <span class="hint">(날짜형식: 2026-07-10)</span>
+          </div>
+        </div>
+
+        <div class="section-header">✈ 3. 검색 조건</div>
+        <div id="gm-condition-single-wrap"></div>
+        <div id="gm-condition-set-wrap" style="display:none;"></div>
+        <div class="row-inline" id="gm-add-set-row" style="display:none; padding: 0 20px;">
+          <button class="btn btn-soft" data-act="add-set">＋ 세트 추가</button>
+        </div>
+        <div class="row-inline" style="justify-content: space-between; padding: 0 20px;">
+          <span class="link-text" id="gm-set-mode-hint">여러 조건의 항공료를 동시에 추출하고 싶다면 검색 조건 세트를 활성화하세요</span>
+          <button class="btn btn-outline" data-act="toggle-set-mode">📑 검색 조건 세트 활성화</button>
+        </div>
+
+        <div class="section-header">💾 4. 저장 위치</div>
+        <div class="card">
+          <div class="row-inline">
+            <input type="text" id="gm-out-dir" class="input-wide" readonly>
+            <button class="btn btn-primary" data-act="choose-dir">폴더 선택</button>
+          </div>
+          <div class="row-inline" style="margin-top: 10px;">
+            <span class="field-label small">파일명 (비워두면 자동 생성)</span>
+          </div>
+          <div class="row-inline">
+            <input type="text" id="gm-custom-filename" class="input-wide" placeholder="">
+          </div>
+        </div>
+
+        <div class="section-header">⚙ 5. 기타 옵션</div>
+        <div class="card">
+          <label class="checkbox-row">
+            <input type="checkbox" id="gm-show-browser">
+            <span>브라우저 창 표시 (문제 확인용)</span>
+          </label>
+        </div>
+
+        <div class="run-row">
+          <button class="btn btn-run" data-act="run">▶ 추출 시작</button>
+          <button class="btn btn-stop" data-act="stop" disabled>■ 중지</button>
+          <div class="progress-wrap">
+            <span id="gm-progress-label" class="progress-label">대기 중...</span>
+            <div class="progress-bar-bg"><div class="progress-bar-fill" id="gm-progress-fill"></div></div>
+            <span id="gm-progress-pct" class="progress-pct"></span>
+          </div>
+        </div>
+
+        <div class="section-header">📋 실행 로그</div>
+        <div class="log-box" id="gm-log-box"></div>
+      </div>
+
+      <!-- ══════════════ 에어프레미아 검색 페이지 ══════════════ -->
+      <div class="page" id="page-airpremia" style="display:none;">
+
+        <div class="section-header">📍 1. 노선 설정</div>
+        <div class="card">
+          <div class="row-inline">
+            <span class="note">출발지: 인천(ICN) 고정 · 목적지: 방콕(BKK) 고정</span>
+          </div>
+          <div class="row-inline preset-row">
+            <span class="field-label small">💾 프리셋</span>
+            <input list="ap-preset-list" id="ap-preset-input" class="input-preset" placeholder="프리셋 선택 또는 새 이름 입력">
+            <datalist id="ap-preset-list"></datalist>
+            <button class="btn btn-primary" data-act="preset-load">불러오기</button>
+            <button class="btn btn-soft" data-act="preset-save">저장</button>
+            <button class="btn btn-danger-soft" data-act="preset-delete">삭제</button>
+            <button class="btn btn-neutral" data-act="preset-new">＋ 새 프리셋</button>
+          </div>
+        </div>
+
+        <div class="section-header">📅 2. 출발 월</div>
+        <div class="card">
+          <div class="row-inline">
+            <span class="field-label">출발일</span>
+            <input type="text" id="ap-date-from" class="input-date">
+            <span class="arrow">~</span>
+            <input type="text" id="ap-date-to" class="input-date">
+            <span class="hint">(날짜형식: 2026-07-10)</span>
+          </div>
+        </div>
+
+        <div class="section-header">✈ 3. 검색 조건</div>
+        <div id="ap-condition-single-wrap"></div>
+        <div id="ap-condition-set-wrap" style="display:none;"></div>
+        <div class="row-inline" id="ap-add-set-row" style="display:none; padding: 0 20px;">
+          <button class="btn btn-soft" data-act="add-set">＋ 세트 추가</button>
+        </div>
+        <div class="row-inline" style="justify-content: space-between; padding: 0 20px;">
+          <span class="link-text" id="ap-set-mode-hint">여러 조건(박수/인원수)을 동시에 추출하고 싶다면 검색 조건 세트를 활성화하세요</span>
+          <button class="btn btn-outline" data-act="toggle-set-mode">📑 검색 조건 세트 활성화</button>
+        </div>
+
+        <div class="section-header">💾 4. 저장 위치</div>
+        <div class="card">
+          <div class="row-inline">
+            <input type="text" id="ap-out-dir" class="input-wide" readonly>
+            <button class="btn btn-primary" data-act="choose-dir">폴더 선택</button>
+          </div>
+          <div class="row-inline" style="margin-top: 10px;">
+            <span class="field-label small">파일명 (비워두면 자동 생성)</span>
+          </div>
+          <div class="row-inline">
+            <input type="text" id="ap-custom-filename" class="input-wide" placeholder="">
+          </div>
+        </div>
+
+        <div class="section-header">⚙ 5. 기타 옵션</div>
+        <div class="card">
+          <label class="checkbox-row">
+            <input type="checkbox" id="ap-show-browser">
+            <span>브라우저 창 표시 (문제 확인용)</span>
+          </label>
+        </div>
+
+        <div class="run-row">
+          <button class="btn btn-run" data-act="run">▶ 추출 시작</button>
+          <button class="btn btn-stop" data-act="stop" disabled>■ 중지</button>
+          <div class="progress-wrap">
+            <span id="ap-progress-label" class="progress-label">대기 중...</span>
+            <div class="progress-bar-bg"><div class="progress-bar-fill" id="ap-progress-fill"></div></div>
+            <span id="ap-progress-pct" class="progress-pct"></span>
+          </div>
+        </div>
+
+        <div class="section-header">📋 실행 로그</div>
+        <div class="log-box" id="ap-log-box"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
