@@ -541,9 +541,8 @@ class Api:
 # ─────────────────────────────────────────────
 #  진입점
 # ─────────────────────────────────────────────
-if __name__ == "__main__":
-    check_and_update()
-
+def run_app():
+    """pywebview 창을 띄우고 앱을 실행한다. launcher.py가 이 함수를 호출한다."""
     if getattr(sys, "frozen", False):
         base_dir = os.path.dirname(sys.executable)
     else:
@@ -574,3 +573,9 @@ if __name__ == "__main__":
     )
     api.set_window(window)
     webview.start(icon=icon_path)
+
+
+if __name__ == "__main__":
+    # gmarket_air_gui.py를 직접 실행할 때만 자체 업데이트 체크 (launcher를 거치면 launcher가 담당)
+    check_and_update()
+    run_app()
