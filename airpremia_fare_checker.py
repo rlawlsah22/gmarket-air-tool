@@ -391,7 +391,7 @@ def read_total_amount(driver, wait_sec: float = 10.0) -> int:
     return amount
 
 
-def _select_date_tile_with_retry(driver, target: date, attempts: int = 3) -> None:
+def _select_date_tile_with_retry(driver, target: date, attempts: int = 4) -> None:
     """
     select_date_tile()이 실패하면(캘린더가 예상보다 느리게 뜨는 등의 일시적인
     이유일 수 있어) 페이지를 새로고침하고 태국 안내 팝업을 다시 처리한 뒤
@@ -400,13 +400,14 @@ def _select_date_tile_with_retry(driver, target: date, attempts: int = 3) -> Non
     last_err = None
     for i in range(attempts):
         try:
-            select_date_tile(driver, target)
+            select_date_tile(driver, target, wait_sec=15.0)
             return
         except TimeoutException as e:
             last_err = e
             if i < attempts - 1:
+                time.sleep(1.0 + i)  # 재시도할수록 조금씩 더 기다림
                 driver.refresh()
-                time.sleep(1.5)
+                time.sleep(2.5)
                 dismiss_thailand_notice(driver)
     raise last_err
 
@@ -425,6 +426,7 @@ def check_one_date(
     try:
         # --- 출발편 ---
         driver.get(build_leg_url("departure", dest, adt, dep_str, ret_str))
+        time.sleep(1.5)
         dismiss_thailand_notice(driver)
 
         try:

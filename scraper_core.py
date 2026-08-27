@@ -90,6 +90,8 @@ const cards = document.querySelectorAll('.box__item-card');
 cards.forEach((card, idx) => {
     const airlineEls = card.querySelectorAll('.text__airline');
     const airline = airlineEls.length > 0 ? airlineEls[0].innerText.trim() : '';
+    // 귀국편 항공사: 카드에 두 번째 항공사 표시가 있으면 그걸 사용, 없으면(단일 항공사 표시) 가는편과 동일
+    const rAirline = airlineEls.length > 1 ? airlineEls[1].innerText.trim() : airline;
     const timeEls = card.querySelectorAll('.box__time-info .text__time');
     const dep  = timeEls[0] ? timeEls[0].innerText.trim() : '';
     const arr  = timeEls[1] ? timeEls[1].innerText.trim() : '';
@@ -125,7 +127,7 @@ cards.forEach((card, idx) => {
     const cardPrice = cardPriceEl ? cardPriceEl.innerText.trim() : '';
 
     if (airline && dep && arr) {
-        results.push({airline, dep, arr, rDep, rArr, rDepDate, rDuration, cardPrice});
+        results.push({airline, rAirline, dep, arr, rDep, rArr, rDepDate, rDuration, cardPrice});
     }
 });
 return results;
@@ -246,7 +248,7 @@ AIRLINE_CODE_MAP = {
     "산동항공":    "SC",
 }
 
-def click_filters(driver, specific_airlines=None):
+def click_filters(driver, specific_airlines=None, log_fn=None):
     # 직항 체크박스 클릭 (check_flight_01)
     try:
         chk = driver.find_element(By.CSS_SELECTOR, "input#check_flight_01")
@@ -257,14 +259,28 @@ def click_filters(driver, specific_airlines=None):
         pass
 
     # opr=공동운항제외, bag=무료수하물
+    # 클릭 후 aria-selected가 실제로 true로 바뀌었는지 검증하고, 실패하면 최대 3회 재시도.
+    filter_labels = {"opr": "공동운항제외", "bag": "무료수하물"}
     for code in ["opr", "bag"]:
-        try:
-            btn = driver.find_element(By.CSS_SELECTOR, f"button[data-code='{code}']")
-            if btn.get_attribute("aria-selected") == "false":
+        applied = False
+        for attempt in range(3):
+            try:
+                btn = driver.find_element(By.CSS_SELECTOR, f"button[data-code='{code}']")
+                if btn.get_attribute("aria-selected") == "true":
+                    applied = True
+                    break
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+                time.sleep(0.3)
                 driver.execute_script("arguments[0].click();", btn)
                 time.sleep(1.5)
-        except Exception:
-            pass
+                btn2 = driver.find_element(By.CSS_SELECTOR, f"button[data-code='{code}']")
+                if btn2.get_attribute("aria-selected") == "true":
+                    applied = True
+                    break
+            except Exception:
+                time.sleep(0.5)
+        if not applied and log_fn:
+            log_fn(f"      ⚠ '{filter_labels.get(code, code)}' 필터 적용 실패 (버튼을 못 찾았거나 클릭이 반영되지 않음)")
 
     if specific_airlines:
         try:
@@ -328,11 +344,124 @@ def parse_price(s: str) -> int:
     return int(re.sub(r"[^0-9]", "", s)) if s else 0
 
 
-def calc_per_person(total4: int) -> int:
+def calc_per_person(total_amount: int, adults: int = 4) -> int:
     import math
-    per = total4 / 4
+    per = total_amount / adults
     rounded = math.ceil(per / 10000) * 10000
     return rounded + 40000
+
+
+def apply_price_grouping(rows: list, max_range: int = 50000, max_groups: int = 8) -> None:
+    """
+    1인금액(per1) 기준으로 갈무리 처리.
+    - 그룹 내 값들의 범위(최고-최저)는 max_range(기본 5만원) 이내.
+    - 그룹 개수는 최대 max_groups(기본 8)개.
+    - 목표: 인접 그룹 대표값(그룹 내 최고가)끼리의 차이가 최대한 고르게(분산 최소)
+            되도록 그룹을 나눔. 억지로 5만원에 맞추거나 그룹 개수를 최대화하지 않음.
+    - rows의 각 dict에 "grouped_price" 키를 추가함 (found=False인 행은 건드리지 않음).
+    """
+    found_rows = [row for row in rows if row.get("found") and row.get("per1")]
+    if not found_rows:
+        return
+
+    sorted_rows = sorted(found_rows, key=lambda r: r["per1"])
+    values = [r["per1"] for r in sorted_rows]
+
+    groups = _best_price_partition(values, max_range=max_range, max_groups=max_groups)
+
+    idx = 0
+    for group in groups:
+        rep = group[-1]
+        for _ in group:
+            sorted_rows[idx]["grouped_price"] = rep
+            idx += 1
+
+
+def _best_price_partition(values: list, max_range: int = 50000, max_groups: int = 8,
+                           time_budget: float = 1.5) -> list:
+    """
+    정렬된 values를 분할해 그룹 리스트를 반환.
+    branch-and-bound로 '인접 그룹 대표값 차이의 분산'을 최소화.
+    시간 예산(time_budget)을 넘으면 지금까지 찾은 최선의 결과를 반환.
+    """
+    import time as _time
+    n = len(values)
+    if n == 0:
+        return []
+    if n == 1:
+        return [values]
+
+    best = {"var": float("inf"), "groups": None}
+    t_start = _time.time()
+    timed_out = {"flag": False}
+
+    def possible_group_ends(start):
+        ends = []
+        for end in range(start + 1, n + 1):
+            if values[end - 1] - values[start] <= max_range:
+                ends.append(end)
+            else:
+                break
+        return ends
+
+    def partial_var(reps):
+        if len(reps) < 2:
+            return 0.0
+        diffs = [reps[i + 1] - reps[i] for i in range(len(reps) - 1)]
+        mean = sum(diffs) / len(diffs)
+        return sum((d - mean) ** 2 for d in diffs) / len(diffs)
+
+    def recurse(start, groups_so_far, reps_so_far):
+        if timed_out["flag"]:
+            return
+        if _time.time() - t_start > time_budget:
+            timed_out["flag"] = True
+            return
+        if len(groups_so_far) > max_groups:
+            return
+        if len(reps_so_far) >= 2:
+            pv = partial_var(reps_so_far)
+            if pv > best["var"] * 3:
+                return
+        if start == n:
+            var = partial_var(reps_so_far)
+            if var < best["var"]:
+                best["var"] = var
+                best["groups"] = list(groups_so_far)
+            return
+        for end in possible_group_ends(start):
+            group = values[start:end]
+            groups_so_far.append(group)
+            reps_so_far.append(group[-1])
+            recurse(end, groups_so_far, reps_so_far)
+            groups_so_far.pop()
+            reps_so_far.pop()
+
+    recurse(0, [], [])
+
+    if best["groups"] is None:
+        groups = []
+        cur = [values[0]]
+        for v in values[1:]:
+            if v - cur[0] <= max_range:
+                cur.append(v)
+            else:
+                groups.append(cur)
+                cur = [v]
+        groups.append(cur)
+        return groups
+
+    return best["groups"]
+
+
+def _grouping_remark(row: dict) -> str:
+    """비고: 1인금액과 갈무리 완료 항공료의 차액 (차이 없으면 0원)"""
+    per1 = row.get("per1", 0)
+    grouped = row.get("grouped_price", per1)
+    diff = grouped - per1
+    if diff <= 0:
+        return "0원"
+    return f"+{diff:,}"
 
 
 # ─────────────────────────────────────────────
@@ -484,25 +613,25 @@ def select_best(flights: list, config: dict) -> Optional[dict]:
         return min(candidates, key=lambda f: parse_price(f.get("cardPrice", f.get("price", "0"))))
 
     if mode == "외항사만":
-        return best_from([f for f in flights if f["airline"] in FOREIGN_ALL])
+        return best_from([f for f in flights if f["airline"] in FOREIGN_ALL and f.get("rAirline", f["airline"]) in FOREIGN_ALL])
     if mode == "특정항공사":
         specific = config.get("specific_airlines", [])
-        return best_from([f for f in flights if f["airline"] in specific])
+        return best_from([f for f in flights if f["airline"] in specific and f.get("rAirline", f["airline"]) in specific])
     if mode == "LCC만":
-        return best_from([f for f in flights if f["airline"] in LCC_ALL])
+        return best_from([f for f in flights if f["airline"] in LCC_ALL and f.get("rAirline", f["airline"]) in LCC_ALL])
     if mode == "FSC만":
-        return best_from([f for f in flights if f["airline"] in FSC_ALL])
+        return best_from([f for f in flights if f["airline"] in FSC_ALL and f.get("rAirline", f["airline"]) in FSC_ALL])
     if mode == "LCC우선_FSC대체":
-        result = best_from([f for f in flights if f["airline"] in LCC_TIER1])
+        result = best_from([f for f in flights if f["airline"] in LCC_TIER1 and f.get("rAirline", f["airline"]) in LCC_TIER1])
         if result:
             return result
-        result = best_from([f for f in flights if f["airline"] in LCC_TIER2])
+        result = best_from([f for f in flights if f["airline"] in LCC_TIER2 and f.get("rAirline", f["airline"]) in LCC_TIER2])
         if result:
             return result
-        result = best_from([f for f in flights if f["airline"] in LCC_OTHER])
+        result = best_from([f for f in flights if f["airline"] in LCC_OTHER and f.get("rAirline", f["airline"]) in LCC_OTHER])
         if result:
             return result
-        return best_from([f for f in flights if f["airline"] in FSC_ALL])
+        return best_from([f for f in flights if f["airline"] in FSC_ALL and f.get("rAirline", f["airline"]) in FSC_ALL])
     return None
 
 
@@ -533,31 +662,84 @@ def fetch_flights(driver, url: str, log_fn=None, specific_airlines=None) -> list
 
     time.sleep(3)
 
-    click_filters(driver, specific_airlines=specific_airlines)
+    click_filters(driver, specific_airlines=specific_airlines, log_fn=log_fn)
 
-    # 필터 클릭 후 카드가 사라졌다가 다시 로드될 때까지 대기
-    try:
-        # 카드가 일단 사라지길 기다림 (필터 적용 중)
-        time.sleep(2)
-        WebDriverWait(driver, 8).until_not(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".box__item-card"))
-        )
-    except Exception:
-        pass  # 안 사라져도 계속 진행
-
-    try:
-        # 카드가 다시 나타날 때까지 대기
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".box__item-card"))
-        )
-        WebDriverWait(driver, 20).until(
-            lambda d: d.execute_script(
-                "return document.querySelectorAll('.box__item-card .text__time').length > 0"
+    # 필터가 실제로 3개 다 선택된 상태인지 최종 확인 (직항/공동운항제외/무료수하물).
+    # 하나라도 선택 안 되어 있으면 재시도하고, 그래도 안 되면 데이터를 절대 반환하지 않는다.
+    def _filters_all_applied():
+        try:
+            direct_ok = driver.execute_script(
+                "var c = document.querySelector('#check_flight_01');"
+                "return c ? c.checked : false;"
             )
-        )
-        time.sleep(4)
-    except Exception:
-        pass
+        except Exception:
+            direct_ok = False
+        try:
+            opr_ok = driver.execute_script(
+                "var b = document.querySelector(\"button[data-code='opr']\");"
+                "return b ? b.getAttribute('aria-selected') === 'true' : false;"
+            )
+        except Exception:
+            opr_ok = False
+        try:
+            bag_ok = driver.execute_script(
+                "var b = document.querySelector(\"button[data-code='bag']\");"
+                "return b ? b.getAttribute('aria-selected') === 'true' : false;"
+            )
+        except Exception:
+            bag_ok = False
+        return direct_ok, opr_ok, bag_ok
+
+    filters_ok = False
+    for retry in range(3):
+        time.sleep(2)
+        direct_ok, opr_ok, bag_ok = _filters_all_applied()
+        if direct_ok and opr_ok and bag_ok:
+            filters_ok = True
+            break
+        if retry < 2:
+            click_filters(driver, specific_airlines=specific_airlines, log_fn=log_fn)
+
+    if not filters_ok:
+        direct_ok, opr_ok, bag_ok = _filters_all_applied()
+        if log_fn:
+            missing = []
+            if not direct_ok:
+                missing.append("직항만")
+            if not opr_ok:
+                missing.append("공동운항제외")
+            if not bag_ok:
+                missing.append("무료수하물")
+            log_fn(f"      ⚠ 필터 미적용({', '.join(missing)}) - 이 결과는 신뢰할 수 없어 건너뜁니다")
+        return []
+
+    # 필터 적용 후 "선택한 조건으로 검색된 항공편이 없습니다" 안내 문구 확인 (최대 15초 폴링)
+    t_start = time.time()
+    while time.time() - t_start < 15:
+        try:
+            no_result = driver.execute_script(
+                "return document.body.innerText.includes('선택한 조건으로 검색된 항공편이 없습니다');"
+            )
+        except Exception:
+            no_result = False
+
+        if no_result:
+            if log_fn:
+                log_fn("      (필터 조건에 맞는 항공편 없음)")
+            return []
+
+        try:
+            has_cards = driver.execute_script(
+                "return document.querySelectorAll('.box__item-card').length > 0;"
+            )
+        except Exception:
+            has_cards = False
+
+        if has_cards:
+            break
+        time.sleep(1)
+
+    time.sleep(2)
 
 
 
@@ -622,10 +804,12 @@ def collect_monthly(origin: str, dest: str, year: int, month: int,
             if best:
                 total4 = parse_price(best["price"])
                 per1   = calc_per_person(total4)
+                r_airline = best.get("rAirline", best["airline"])
+                airline_display = best["airline"] if r_airline == best["airline"] else f"{best['airline']}/{r_airline}"
                 rows.append({
                     "dep_date":  dep_date.strftime("%Y-%m-%d"),
                     "arr_date":  arr_date.strftime("%Y-%m-%d"),
-                    "airline":   best["airline"],
+                    "airline":   airline_display,
                     "dep":       best["dep"],
                     "arr":       best["arr"],
                     "rDep":      best.get("rDep", ""),
@@ -671,19 +855,24 @@ THIN = Side(style="thin", color="CCCCCC")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 CENTER = Alignment(horizontal="center", vertical="center")
 
-HEADERS = ["출발일", "귀국일", "항공사", "출발시간", "도착시간",
-           "귀국출발", "귀국도착", "4인총금액(카드할인가)", "1인금액", "비고"]
-COL_WIDTHS = [13, 13, 12, 10, 10, 10, 10, 22, 18, 16]
+def build_headers(adults: int = 4) -> list:
+    return ["출발일", "귀국일", "항공사", "출발시간", "도착시간",
+            "귀국출발", "귀국도착", f"{adults}인총금액(카드할인가)", "1인금액", "갈무리 완료 항공료", "비고"]
+
+
+COL_WIDTHS = [13, 13, 12, 10, 10, 10, 10, 22, 18, 20, 16]
 
 
 def save_excel(rows: list, origin: str, dest: str,
-               year: int, month: int, out_path: str):
+               year: int, month: int, out_path: str, adults: int = 4):
+    apply_price_grouping(rows)
+
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = f"{origin}_{dest}_{year}{month:02d}"
     ws.row_dimensions[1].height = 22
 
-    for col, (h, w) in enumerate(zip(HEADERS, COL_WIDTHS), 1):
+    for col, (h, w) in enumerate(zip(build_headers(adults), COL_WIDTHS), 1):
         cell = ws.cell(row=1, column=col, value=h)
         cell.fill   = FILL_HEADER
         cell.font   = FONT_HEADER
@@ -707,13 +896,13 @@ def save_excel(rows: list, origin: str, dest: str,
             values = [
                 row["dep_date"], row["arr_date"], airline,
                 row["dep"], row["arr"], row["rDep"], row["rArr"],
-                row["total4"], row["per1"], row["seller"],
+                row["total4"], row["per1"], row.get("grouped_price", row["per1"]), _grouping_remark(row),
             ]
             font = FONT_NORMAL
         else:
             fill = FILL_NONE
             values = [row["dep_date"], row["arr_date"],
-                      "X", "", "", "", "", "", "", ""]
+                      "X", "", "", "", "", "", "", "", ""]
             font = FONT_NONE
 
         for col, val in enumerate(values, 1):
@@ -726,6 +915,7 @@ def save_excel(rows: list, origin: str, dest: str,
         if row["found"]:
             ws.cell(row=r, column=8).number_format = '#,##0'
             ws.cell(row=r, column=9).number_format = '#,##0'
+            ws.cell(row=r, column=10).number_format = '#,##0'
 
     ws.freeze_panes = "A2"
     wb.save(out_path)
@@ -741,7 +931,7 @@ def _safe_sheet_name(name: str) -> str:
     return name[:31] if len(name) > 31 else name
 
 
-def save_excel_multi(rows_by_set: list, origin: str, dest: str, out_path: str):
+def save_excel_multi(rows_by_set: list, origin: str, dest: str, out_path: str, adults: int = 4):
     """
     rows_by_set: [{"label": "세트1_3일_LCC만", "rows": [...]}, ...]
     세트별로 시트를 분리해서 같은 엑셀 파일에 저장
@@ -749,10 +939,12 @@ def save_excel_multi(rows_by_set: list, origin: str, dest: str, out_path: str):
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
+    headers = build_headers(adults)
     used_names = set()
     for entry in rows_by_set:
         label = entry["label"]
         rows  = entry["rows"]
+        apply_price_grouping(rows)
 
         sheet_name = _safe_sheet_name(label)
         base_name = sheet_name
@@ -765,7 +957,7 @@ def save_excel_multi(rows_by_set: list, origin: str, dest: str, out_path: str):
         ws = wb.create_sheet(title=sheet_name)
         ws.row_dimensions[1].height = 22
 
-        for col, (h, w) in enumerate(zip(HEADERS, COL_WIDTHS), 1):
+        for col, (h, w) in enumerate(zip(headers, COL_WIDTHS), 1):
             cell = ws.cell(row=1, column=col, value=h)
             cell.fill      = FILL_HEADER
             cell.font      = FONT_HEADER
@@ -789,13 +981,13 @@ def save_excel_multi(rows_by_set: list, origin: str, dest: str, out_path: str):
                 values = [
                     row["dep_date"], row["arr_date"], airline,
                     row["dep"], row["arr"], row["rDep"], row["rArr"],
-                    row["total4"], row["per1"], row["seller"],
+                    row["total4"], row["per1"], row.get("grouped_price", row["per1"]), _grouping_remark(row),
                 ]
                 font = FONT_NORMAL
             else:
                 fill = FILL_NONE
                 values = [row["dep_date"], row["arr_date"],
-                          "X", "", "", "", "", "", "", ""]
+                          "X", "", "", "", "", "", "", "", ""]
                 font = FONT_NONE
 
             for col, val in enumerate(values, 1):
@@ -808,6 +1000,7 @@ def save_excel_multi(rows_by_set: list, origin: str, dest: str, out_path: str):
             if row["found"]:
                 ws.cell(row=r, column=8).number_format = '#,##0'
                 ws.cell(row=r, column=9).number_format = '#,##0'
+                ws.cell(row=r, column=10).number_format = '#,##0'
 
         ws.freeze_panes = "A2"
 
