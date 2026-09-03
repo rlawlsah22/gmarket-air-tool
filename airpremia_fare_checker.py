@@ -481,11 +481,19 @@ def check_one_date(
 
 
 def init_driver(headless: bool = False):
-    """G마켓 도구와 동일한 패턴: driver 생성만 담당. GUI 등 상위 코드가 lifecycle을 관리."""
+    """
+    G마켓 도구와 동일한 패턴: driver 생성만 담당. GUI 등 상위 코드가 lifecycle을 관리.
+
+    주의: --headless=new 는 렌더링 엔진이 창 모드와 미묘하게 달라서(특히 캘린더
+    캐러셀처럼 애니메이션/트랜지션 기반 UI에서) 날짜 타일을 못 찾는 문제가
+    있었음. 그래서 진짜 헤드리스 대신, 창은 정상적으로 띄우되 화면 밖(음수
+    좌표)으로 이동시켜 사용자 눈에는 안 보이게 하는 방식을 사용한다. 렌더링
+    파이프라인이 창 모드와 100% 동일해서 이전에 잘 동작하던 방식과 같다.
+    """
     options = webdriver.ChromeOptions()
-    if headless:
-        options.add_argument("--headless=new")
     options.add_argument("--window-size=1400,1000")
+    if headless:
+        options.add_argument("--window-position=-2400,-2400")
     return webdriver.Chrome(options=options)
 
 
