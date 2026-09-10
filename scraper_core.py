@@ -63,7 +63,7 @@ for country, cities in AIRPORTS.items():
         AIRPORT_CODES[city] = code
         AIRPORT_CODES[code] = code
 
-LCC_TIER1 = ["진에어", "이스타항공", "티웨이항공"]
+LCC_TIER1 = ["진에어", "이스타항공", "트리니티항공"]
 LCC_TIER2 = ["제주항공", "에어부산"]
 LCC_OTHER = ["에어로케이", "에어서울", "파라타항공"]
 LCC_ALL   = LCC_TIER1 + LCC_TIER2 + LCC_OTHER
@@ -235,7 +235,7 @@ AIRLINE_CODE_MAP = {
     "아시아나항공": "OZ",
     "진에어":     "LJ",
     "제주항공":   "7C",
-    "티웨이항공":  "TW",
+    "트리니티항공":  "TW",
     "이스타항공":  "ZE",
     "에어부산":   "BX",
     "에어서울":   "RS",
